@@ -45,7 +45,7 @@
 <body>
   <div class="wrap" id="appWrap">
     <div class="card">
-      <div class="big">Multiplayer „Barvy na telefonech“3</div>
+      <div class="big">Multiplayer „Barvy na telefonech“4</div>
       <div class="muted">Host jen ovládá a vidí výsledky. Herní telefony jsou během hry buď barva fullscreen, nebo úplná tma.</div>
     </div>
 
@@ -245,6 +245,12 @@
     let actionsRef = null;
     let playersRef = null;
 
+    // ✅ NOVÉ reference pro „host alive“
+    let hostAliveRef = null;
+
+    // ✅ NOVÉ: ukládáme si svůj device ref, ať můžeme rychle odejít
+    let myDeviceRef = null;
+
     // Host runtime
     let hostRunning = false;
     let stopTimer = null;
@@ -299,6 +305,50 @@
       idle.style.display = "none";
     }
 
+    // ✅ NOVÉ: kompletní odpojení z místnosti (hráčům se zavolá když host zmizí)
+    async function leaveRoom(reason){
+      try { hostRunning = false; } catch {}
+      try { clearTimeout(stopTimer); } catch {}
+      try { if (hostTickTimer) { clearInterval(hostTickTimer); hostTickTimer = null; } } catch {}
+
+      try { hideFullscreen(); hideIdle(); } catch {}
+      try { showUI(); } catch {}
+
+      try {
+        // odpoj listeners (best-effort)
+        if (devicesRef) devicesRef.off();
+        if (playersRef) playersRef.off();
+        if (stateRef) stateRef.off();
+        if (actionsRef) actionsRef.off();
+        if (hostAliveRef) hostAliveRef.off();
+      } catch {}
+
+      try { if (myDeviceRef) await myDeviceRef.remove(); } catch {}
+
+      // reset UI
+      try {
+        hostCard.style.display = "none";
+        joinCard.style.display = "";
+        statusCard.style.display = "none";
+        scoreCard.style.display = "none";
+        rolePill.textContent = "Nepřipojeno";
+        rolePill.style.background = "rgba(255,255,255,.08)";
+        phaseLabel.textContent = "-";
+        statusLine.textContent = reason ? ("Odpojeno: " + reason) : "Odpojeno.";
+      } catch {}
+
+      // reset state vars
+      roomCode = null;
+      isHost = false;
+      roomRef = null;
+      stateRef = null;
+      devicesRef = null;
+      actionsRef = null;
+      playersRef = null;
+      hostAliveRef = null;
+      myDeviceRef = null;
+    }
+
     async function ensureFirebase() {
       if (!app) {
         app = firebase.initializeApp(firebaseConfig);
@@ -318,13 +368,16 @@
       actionsRef = roomRef.child("actions");
       playersRef = roomRef.child("players");
 
+      // ✅ NOVÉ: hostAlive zámek
+      hostAliveRef = roomRef.child("hostAlive");
+
       roomCodeLabel.textContent = roomCode;
       statusCard.style.display = "";
       scoreCard.style.display = "";
 
       // presence
       const myName = (nameInput.value || "").trim() || "Telefon";
-      const myDeviceRef = devicesRef.child(deviceId);
+      myDeviceRef = devicesRef.child(deviceId);
       await myDeviceRef.set({ name: myName, joinedAt: now(), lastSeen: now() });
       myDeviceRef.onDisconnect().remove();
       setInterval(()=> myDeviceRef.update({ lastSeen: now() }).catch(()=>{}), 5000);
@@ -340,9 +393,34 @@
         isHost = (snap.val() === deviceId);
       }
 
+      // ✅ NOVÉ: host „vlastní“ hostAlive a když odpadne, hostAlive zmizí + místnost se resetne
+      if (isHost) {
+        try {
+          await hostAliveRef.set({ id: deviceId, at: now() });
+          hostAliveRef.onDisconnect().remove();
+
+          // ✅ když host zmizí, smaž state + actions + players (a tím se hra „zruší“)
+          // Pozn.: devices se smažou samy přes onDisconnect().remove()
+          hostAliveRef.onDisconnect().then(()=>{}).catch(()=>{});
+          stateRef.onDisconnect().remove();
+          actionsRef.onDisconnect().remove();
+          playersRef.onDisconnect().remove();
+        } catch {}
+      }
+
       rolePill.textContent = isHost ? "HOST" : "HRÁČ";
       rolePill.style.background = isHost ? "rgba(42,102,255,.22)" : "rgba(255,214,10,.18)";
       hostCard.style.display = isHost ? "" : "none";
+
+      // ✅ NOVÉ: když hostAlive zmizí a já nejsem host => automaticky leaveRoom()
+      if (!isHost) {
+        hostAliveRef.on("value", (s) => {
+          if (!s.exists()) {
+            // host odešel => všichni pryč
+            leaveRoom("Host odešel – místnost zrušena");
+          }
+        });
+      }
 
       // init defaults if host and missing
       if (isHost) {
@@ -365,6 +443,21 @@
       // actions (host only)
       if (isHost) {
         actionsRef.limitToLast(200).on("child_added", snap2 => onAction(snap2.val()));
+      }
+
+      // ✅ NOVÉ: když host zavře stránku normálně, zkus to zrušit hned (best-effort)
+      if (isHost) {
+        const hostCleanup = async () => {
+          try { hostRunning = false; } catch {}
+          try { if (hostTickTimer) { clearInterval(hostTickTimer); hostTickTimer = null; } } catch {}
+          try { clearTimeout(stopTimer); } catch {}
+          try { await hostAliveRef.remove(); } catch {}
+          try { await stateRef.remove(); } catch {}
+          try { await actionsRef.remove(); } catch {}
+          try { await playersRef.remove(); } catch {}
+        };
+        window.addEventListener("pagehide", () => { hostCleanup().catch(()=>{}); });
+        window.addEventListener("beforeunload", () => { hostCleanup().catch(()=>{}); });
       }
     }
 
@@ -568,11 +661,7 @@
       const idle = getIdleDevices(dc);
       const colored = getColoredDevices(dc);
 
-      // kolik máme "herních" zařízení momentálně v mapě (může být víc než hráčů)
-      const coloredCount = colored.length; // mělo by být = nPlayers vždy (udržíme)
       const hasIdle = idle.length > 0;
-
-      const updates = {};
 
       if (hasIdle) {
         // move color -> random idle phone
@@ -598,13 +687,12 @@
         dc[deviceIdThatTriggered] = otherColor;
         dc[swapWith] = currentColor;
 
-        // reset časů obou (nová „výzva“)
+        // reset časů obou
         shownAtMap[deviceIdThatTriggered] = now();
         shownAtMap[swapWith] = now();
       }
 
       // pojistka: držet invariant "každá barva právě jednou"
-      // (v praxi to invariantně drží výše, ale kdyby došlo k rozhození mapy, opravíme)
       const activeColors = COLORS.slice(0, nPlayers).map(c=>c.key);
       const count = {};
       for (const k of activeColors) count[k]=0;
@@ -613,10 +701,8 @@
         if (c && (c in count)) count[c]++;
       }
 
-      // pokud nějaká barva chybí nebo je 2×, opravíme přeskládáním do prvních N telefonů
       const bad = activeColors.some(k => count[k] !== 1);
       if (bad) {
-        // znovu vytvoř mapování podle aktuálně připojených telefonů (tmavé navíc)
         const rebuilt = buildInitialDeviceColors(gameDevices, nPlayers);
         dc = rebuilt.dc;
         shownAtMap = rebuilt.shownAtMap;
@@ -650,16 +736,13 @@
       const dc = st.deviceColors || {};
       const shownAtMap = st.shownAtMap || {};
 
-      // zkontroluj expirace pro každý telefon s barvou
       for (const devId of Object.keys(dc)) {
         const colorKey = dc[devId];
         if (!colorKey) continue;
 
         const tShown = shownAtMap[devId] || 0;
         if (tShown && (now() - tShown) >= dur) {
-          // timeout pro konkrétní telefon
           await hostHandleEventForDevice(devId, "timeout");
-          // po jednom timeoutu stačí skončit, další se dořeší v dalším ticku (méně kolizí)
           return;
         }
       }
@@ -673,7 +756,6 @@
       const st = (await stateRef.get()).val() || {};
       if (st.phase !== "running") return;
 
-      // jen ťuknutí na telefon, který má barvu (jinak ignore)
       const dc = st.deviceColors || {};
       if (!dc[act.deviceId]) return;
 
@@ -722,8 +804,6 @@
     btnStart.onclick = async () => {
       if (!isHost) return;
 
-      // ✅ kontrola: hráčů <= herních telefonů (bez hosta)
-      const stBefore = (await stateRef.get()).val() || {};
       const nPlayers = clamp(parseInt(playersCount.value,10)||4,2,10);
 
       const gameDevices = await getConnectedGameDevices();
@@ -734,7 +814,7 @@
 
       hostRunning = true;
 
-      // apply settings + reset round (ponechá UI + score reset v playersRef)
+      // apply settings + reset round
       await initRoomDefaults();
 
       // clear actions
@@ -744,7 +824,6 @@
       const startedAt = now();
       const endsAt = startedAt + gls*1000;
 
-      // ✅ vytvoř mapu deviceColors: přesně nPlayers telefonů dostane různé barvy, zbytek tmavý
       const init = buildInitialDeviceColors(gameDevices, nPlayers);
 
       await stateRef.update({
@@ -753,19 +832,15 @@
         round:0,
         gameStartedAt: startedAt,
         gameEndsAt: endsAt,
-
-        // nové mapy
         deviceColors: init.dc,
         shownAtMap: init.shownAtMap
       });
 
-      // local stop timer (host convenience)
       clearTimeout(stopTimer);
       stopTimer = setTimeout(async ()=>{
         try { await stateRef.update({ phase:"stopped", hostRunning:false }); } catch {}
       }, gls*1000 + 50);
 
-      // ✅ host ticker na timeouty
       if (hostTickTimer) clearInterval(hostTickTimer);
       hostTickTimer = setInterval(()=>{ hostTick().catch(()=>{}); }, 150);
     };
