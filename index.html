@@ -23,21 +23,30 @@
     .pill { padding: 6px 10px; border-radius: 999px; background: rgba(255,255,255,.08); font-size: 13px; }
     .table { width:100%; border-collapse: collapse; font-size: 14px; }
     .table th,.table td { padding: 8px; border-bottom: 1px solid rgba(255,255,255,.08); text-align:left; }
+
+    /* Fullscreen color */
     .fullScreen {
       position: fixed; inset: 0; display: none;
       align-items: center; justify-content: center; flex-direction: column;
       touch-action: manipulation;
     }
-    .fsText { font-size: 22px; font-weight: 800; text-shadow: 0 2px 14px rgba(0,0,0,.3); }
+    .fsText { font-size: 28px; font-weight: 900; text-shadow: 0 2px 14px rgba(0,0,0,.35); }
     .fsSub { margin-top: 10px; font-size: 14px; opacity:.9; }
     .tapHint { margin-top: 18px; font-size: 16px; padding: 10px 14px; border-radius: 999px; background: rgba(0,0,0,.18); }
+
+    /* Fullscreen idle (ztmavení) */
+    .idleScreen{
+      position: fixed; inset: 0;
+      display: none;
+      background: #000;
+    }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="card">
       <div class="big">Multiplayer „Barvy na telefonech“</div>
-      <div class="muted">PWA (instalovatelná). Telefony se propojí přes internet pomocí 5místného kódu místnosti.</div>
+      <div class="muted">Host jen ovládá a vidí výsledky. Herní telefony ztmavnou, pokud nejsou na řadě.</div>
     </div>
 
     <div class="card" id="joinCard">
@@ -60,18 +69,19 @@
         <button class="secondary" id="btnRandom">Vygenerovat kód</button>
       </div>
       <div class="muted" style="margin-top:8px">
-        První telefon, který místnost založí, je <b>host</b>.
+        První telefon, který místnost založí, je <b>host</b>. Host není součástí hry.
       </div>
     </div>
 
     <div class="card" id="hostCard" style="display:none">
       <div class="big">Host – nastavení</div>
-      <div class="muted">Počet hráčů = počet barev. Čas = jak dlouho smí barva svítit, než se kolo posune dál.</div>
+      <div class="muted">Počet hráčů = počet barev. Čas na stisk = timeout. Délka hry = automatický stop.</div>
 
       <div style="height:10px"></div>
-      <label class="muted">Počet hráčů (2–6)</label>
+      <label class="muted">Počet hráčů (2–10)</label>
       <select id="playersCount">
         <option>2</option><option>3</option><option selected>4</option><option>5</option><option>6</option>
+        <option>7</option><option>8</option><option>9</option><option>10</option>
       </select>
 
       <div style="height:10px"></div>
@@ -79,20 +89,26 @@
       <input id="durationMs" inputmode="numeric" value="1800" />
 
       <div style="height:10px"></div>
+      <label class="muted">Délka hry (s) – po vypršení se sama zastaví</label>
+      <input id="gameLengthSec" inputmode="numeric" value="60" />
+
+      <div style="height:10px"></div>
       <div class="row">
         <button id="btnApply">Uložit nastavení</button>
         <button id="btnStart">Start hry</button>
         <button class="danger" id="btnStop">Stop</button>
+        <button class="secondary" id="btnReset">Vynulovat skóre</button>
       </div>
 
       <div style="height:10px"></div>
-      <div class="muted">Připojené telefony: <span id="devicesCount">0</span></div>
+      <div class="muted">Připojené telefony (včetně hosta): <span id="devicesCount">0</span></div>
     </div>
 
     <div class="card" id="statusCard" style="display:none">
       <div class="row">
         <div class="pill">Místnost: <span class="code" id="roomCodeLabel">-----</span></div>
         <div class="pill">Kolo: <span id="roundLabel">0</span></div>
+        <div class="pill">Stav: <span id="phaseLabel">-</span></div>
       </div>
       <div style="height:10px"></div>
       <div class="muted" id="statusLine">Čekám…</div>
@@ -117,24 +133,25 @@
     <div class="fsSub" id="fsSub">…</div>
   </div>
 
+  <!-- Fullscreen idle (ztmavení) -->
+  <div class="idleScreen" id="idle"></div>
+
   <!-- Firebase (compat for simple CDN usage) -->
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
 
   <script>
-    // ========== 0) Firebase config – DOPLŇ SEM ==========
-const firebaseConfig = {
-  apiKey: "AIzaSyDgMBr7Qv_EEa83TWS174eJdQW9xbgcSX0",
-  authDomain: "barvy-multiplayer.firebaseapp.com",
-  databaseURL: "https://barvy-multiplayer-default-rtdb.europe-west1.firebasedatabase.app",
-  projectId: "barvy-multiplayer",
-  storageBucket: "barvy-multiplayer.appspot.com",
-  messagingSenderId: "1013627563036",
-  appId: "1:1013627563036:web:83e19f570dd9a51d9143d9"
-};
-// =============================================
-
-    // ====================================================
+    // ========== 0) Firebase config ==========
+    const firebaseConfig = {
+      apiKey: "AIzaSyDgMBr7Qv_EEa83TWS174eJdQW9xbgcSX0",
+      authDomain: "barvy-multiplayer.firebaseapp.com",
+      databaseURL: "https://barvy-multiplayer-default-rtdb.europe-west1.firebasedatabase.app",
+      projectId: "barvy-multiplayer",
+      storageBucket: "barvy-multiplayer.appspot.com",
+      messagingSenderId: "1013627563036",
+      appId: "1:1013627563036:web:83e19f570dd9a51d9143d9"
+    };
+    // =======================================
 
     // PWA SW
     if ("serviceWorker" in navigator) {
@@ -143,7 +160,6 @@ const firebaseConfig = {
 
     // Helpers
     const $ = (id)=>document.getElementById(id);
-    const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
     const now = ()=>Date.now();
     const clamp = (n,a,b)=>Math.max(a,Math.min(b,n));
     const randInt = (a,b)=>Math.floor(Math.random()*(b-a+1))+a;
@@ -171,22 +187,27 @@ const firebaseConfig = {
 
     const playersCount = $("playersCount");
     const durationMs = $("durationMs");
+    const gameLengthSec = $("gameLengthSec");
+
     const btnApply = $("btnApply");
     const btnStart = $("btnStart");
     const btnStop = $("btnStop");
+    const btnReset = $("btnReset");
     const devicesCount = $("devicesCount");
 
     const roomCodeLabel = $("roomCodeLabel");
     const statusLine = $("statusLine");
     const roundLabel = $("roundLabel");
+    const phaseLabel = $("phaseLabel");
 
     const scoreTableBody = $("scoreTable").querySelector("tbody");
 
     const fs = $("fs");
     const fsText = $("fsText");
     const fsSub = $("fsSub");
+    const idle = $("idle");
 
-    // Colors (2–6)
+    // Colors (až 10)
     const COLORS = [
       {key:"red",    label:"Červená",  css:"#ff3b30"},
       {key:"green",  label:"Zelená",   css:"#34c759"},
@@ -194,9 +215,13 @@ const firebaseConfig = {
       {key:"yellow", label:"Žlutá",    css:"#ffd60a"},
       {key:"purple", label:"Fialová",  css:"#af52de"},
       {key:"orange", label:"Oranžová", css:"#ff9500"},
+      {key:"pink",   label:"Růžová",   css:"#ff2d55"},
+      {key:"cyan",   label:"Azurová",  css:"#5ac8fa"},
+      {key:"lime",   label:"Limet",    css:"#bfff00"},
+      {key:"white",  label:"Bílá",     css:"#ffffff"},
     ];
 
-    // State
+    // Firebase state
     let app, db;
     let roomCode = null;
     let isHost = false;
@@ -206,14 +231,10 @@ const firebaseConfig = {
     let actionsRef = null;
     let playersRef = null;
 
-    let stateUnsub = null;
-    let actionsUnsub = null;
-    let devicesUnsub = null;
-    let playersUnsub = null;
-
     // Host runtime
     let hostRunning = false;
     let resolvedForRound = new Set();
+    let stopTimer = null;
 
     function setConn(ok) {
       connPill.textContent = ok ? "online" : "offline";
@@ -239,6 +260,7 @@ const firebaseConfig = {
     }
 
     function showFullscreen(colorCss, label, extra) {
+      idle.style.display = "none";
       fs.style.display = "flex";
       fs.style.background = colorCss;
       fsText.textContent = label;
@@ -247,16 +269,21 @@ const firebaseConfig = {
     function hideFullscreen() {
       fs.style.display = "none";
     }
+    function showIdle() {
+      hideFullscreen();
+      idle.style.display = "block";
+    }
+    function hideIdle() {
+      idle.style.display = "none";
+    }
 
     async function ensureFirebase() {
-      if (!firebaseConfig || !firebaseConfig.apiKey) {
-        alert("Doplň Firebase config v index.html (firebaseConfig).");
-        throw new Error("Missing firebase config");
-      }
       if (!app) {
         app = firebase.initializeApp(firebaseConfig);
         db = firebase.database();
-        setConn(true);
+
+        // real connection indicator
+        db.ref(".info/connected").on("value", (snap) => setConn(!!snap.val()));
       }
     }
 
@@ -273,23 +300,17 @@ const firebaseConfig = {
       statusCard.style.display = "";
       scoreCard.style.display = "";
 
-      // register presence
+      // presence
       const myName = (nameInput.value || "").trim() || "Telefon";
       const myDeviceRef = devicesRef.child(deviceId);
-      await myDeviceRef.set({
-        name: myName,
-        joinedAt: now(),
-        lastSeen: now()
-      });
+      await myDeviceRef.set({ name: myName, joinedAt: now(), lastSeen: now() });
       myDeviceRef.onDisconnect().remove();
-      // heartbeat
       setInterval(()=> myDeviceRef.update({ lastSeen: now() }).catch(()=>{}), 5000);
 
-      // determine host: if state.hostId missing -> try claim
+      // determine host
       const snap = await stateRef.child("hostId").get();
       if (!snap.exists()) {
         try {
-          // transaction to claim host
           const res = await stateRef.child("hostId").transaction(v => v || deviceId);
           isHost = res.committed && res.snapshot.val() === deviceId;
         } catch { isHost = false; }
@@ -299,42 +320,37 @@ const firebaseConfig = {
 
       rolePill.textContent = isHost ? "HOST" : "HRÁČ";
       rolePill.style.background = isHost ? "rgba(42,102,255,.22)" : "rgba(255,214,10,.18)";
-
       hostCard.style.display = isHost ? "" : "none";
 
-      // If host, ensure initial setup exists
+      // init defaults if host and missing
       if (isHost) {
         const st = await stateRef.get();
-        if (!st.exists() || !st.val()?.phase) {
-          await initRoomDefaults();
-        }
+        if (!st.exists() || !st.val()?.phase) await initRoomDefaults();
       }
 
-      // subscribe devices count
-      if (devicesUnsub) devicesRef.off();
-      devicesRef.on("value", snap => {
-        const v = snap.val() || {};
+      // devices count
+      devicesRef.on("value", snap2 => {
+        const v = snap2.val() || {};
         devicesCount.textContent = Object.keys(v).length;
       });
 
-      // subscribe players score
-      if (playersUnsub) playersRef.off();
-      playersRef.on("value", snap => renderScore(snap.val()));
+      // players score
+      playersRef.on("value", snap2 => renderScore(snap2.val()));
 
-      // subscribe state
-      if (stateUnsub) stateRef.off();
-      stateRef.on("value", snap => onState(snap.val() || {}));
+      // state
+      stateRef.on("value", snap2 => onState(snap2.val() || {}));
 
-      // subscribe actions (host only)
+      // actions (host only)
       if (isHost) {
-        if (actionsUnsub) actionsRef.off();
-        actionsRef.limitToLast(30).on("child_added", snap => onAction(snap.val()));
+        actionsRef.limitToLast(50).on("child_added", snap2 => onAction(snap2.val()));
       }
     }
 
     async function initRoomDefaults() {
-      const n = clamp(parseInt(playersCount.value,10)||4,2,6);
-      const dur = clamp(parseInt(durationMs.value,10)||1800,200,10000);
+      const n = clamp(parseInt(playersCount.value,10)||4,2,10);
+      const dur = clamp(parseInt(durationMs.value,10)||1800,200,20000);
+      const gls = clamp(parseInt(gameLengthSec.value,10)||60,1,36000);
+
       const players = {};
       for (let i=0;i<n;i++) {
         const c = COLORS[i];
@@ -345,24 +361,39 @@ const firebaseConfig = {
         phase: "lobby",
         playersCount: n,
         durationMs: dur,
+        gameLengthSec: gls,
         round: 0,
         currentDevice: null,
         currentColor: null,
         shownAt: null,
         resolved: false,
-        hostRunning: false
+        hostRunning: false,
+        gameStartedAt: null,
+        gameEndsAt: null
       });
     }
 
     function onState(st) {
       roundLabel.textContent = st.round || 0;
+      phaseLabel.textContent = st.phase || "-";
 
-      if (st.phase === "lobby") {
-        statusLine.textContent = isHost ? "Lobby – nastav a dej Start." : "Lobby – čekám na start od hosta…";
+      // HOST: nikdy neukazuje herní fullscreen ani idle
+      if (isHost) {
         hideFullscreen();
+        hideIdle();
+        statusLine.textContent =
+          st.phase === "running"
+            ? "Hra běží… (host není ve hře)"
+            : (st.phase === "lobby" ? "Lobby – nastav a dej Start." : (st.phase === "stopped" ? "Stop." : "…"));
         return;
       }
 
+      // HRÁČ: při running – pokud nejsem cíl, ztmavím
+      if (st.phase === "lobby") {
+        statusLine.textContent = "Lobby – čekám na start od hosta…";
+        hideFullscreen(); hideIdle();
+        return;
+      }
       if (st.phase === "running") {
         statusLine.textContent = "Hra běží…";
         const amITarget = (st.currentDevice === deviceId);
@@ -370,40 +401,54 @@ const firebaseConfig = {
           const c = COLORS.find(x=>x.key===st.currentColor) || {css:"#222", label:"Barva"};
           showFullscreen(c.css, c.label, "Kolo " + (st.round||0));
         } else {
-          hideFullscreen();
+          showIdle(); // černá obrazovka bez textu
         }
         return;
       }
-
       if (st.phase === "stopped") {
         statusLine.textContent = "Stop.";
-        hideFullscreen();
+        hideFullscreen(); hideIdle();
       }
     }
 
     async function hostPickNext() {
       const devSnap = await devicesRef.get();
       const devObj = devSnap.val() || {};
-      const devIds = Object.keys(devObj);
+      let devIds = Object.keys(devObj);
+
+      // ✅ host není herní telefon
+      const hostId = (await stateRef.child("hostId").get()).val();
+      devIds = devIds.filter(id => id !== hostId);
+
       if (devIds.length === 0) return null;
 
       const st = (await stateRef.get()).val() || {};
-      const n = clamp(parseInt(st.playersCount||4,10),2,6);
+      const n = clamp(parseInt(st.playersCount||4,10),2,10);
       const activeColors = COLORS.slice(0,n).map(c=>c.key);
 
       const nextDevice = devIds[randInt(0, devIds.length-1)];
       const nextColor = activeColors[randInt(0, activeColors.length-1)];
-      const dur = clamp(parseInt(st.durationMs||1800,10),200,10000);
+      const dur = clamp(parseInt(st.durationMs||1800,10),200,20000);
 
       return { nextDevice, nextColor, dur };
     }
 
     async function hostAdvanceRound(reason) {
+      const st0 = (await stateRef.get()).val() || {};
+      if (st0.phase !== "running") return;
+
+      // auto-stop when time ends
+      if (st0.gameEndsAt && now() >= st0.gameEndsAt) {
+        hostRunning = false;
+        await stateRef.update({ phase:"stopped", hostRunning:false });
+        return;
+      }
+
       const pick = await hostPickNext();
       if (!pick) return;
 
       const newRound = (await stateRef.child("round").get()).val() || 0;
-      resolvedForRound.delete(String(newRound+1)); // cleanup
+      resolvedForRound.delete(String(newRound+1));
 
       await stateRef.update({
         phase: "running",
@@ -415,18 +460,16 @@ const firebaseConfig = {
         resolved: false
       });
 
-      // timeout handling
       const myRound = newRound + 1;
       const dur = pick.dur;
 
-      // after dur, if not resolved -> mark miss for that color and advance
       setTimeout(async () => {
         const st = (await stateRef.get()).val() || {};
         if (st.phase !== "running") return;
         if (st.round !== myRound) return;
         if (st.resolved) return;
 
-        // mark miss
+        // miss
         const colorKey = st.currentColor;
         if (colorKey) {
           await playersRef.child(colorKey).transaction(p => {
@@ -435,6 +478,7 @@ const firebaseConfig = {
             return p;
           });
         }
+
         await stateRef.update({ resolved: true });
         await hostAdvanceRound("timeout");
       }, dur);
@@ -449,11 +493,18 @@ const firebaseConfig = {
       if (st.phase !== "running") return;
       if (st.resolved) return;
 
-      // only accept tap from the currently lit device
+      // accept only from current device
       if (act.deviceId !== st.currentDevice) return;
 
       const roundKey = String(st.round || 0);
       if (resolvedForRound.has(roundKey)) return;
+
+      // auto-stop when time ends
+      if (st.gameEndsAt && now() >= st.gameEndsAt) {
+        hostRunning = false;
+        await stateRef.update({ phase:"stopped", hostRunning:false });
+        return;
+      }
 
       const reaction = Math.max(0, (act.at||now()) - (st.shownAt||now()));
       const colorKey = st.currentColor;
@@ -461,7 +512,6 @@ const firebaseConfig = {
 
       resolvedForRound.add(roundKey);
 
-      // update stats
       await playersRef.child(colorKey).transaction(p => {
         if (!p) return p;
         p.hits = (p.hits||0) + 1;
@@ -473,7 +523,7 @@ const firebaseConfig = {
       await hostAdvanceRound("tap");
     }
 
-    // Tap handling (client side)
+    // Tap handling (only when color shown; idle has no listener)
     fs.addEventListener("pointerdown", async (e) => {
       if (!roomCode) return;
       e.preventDefault();
@@ -484,6 +534,7 @@ const firebaseConfig = {
 
     // Buttons
     btnRandom.onclick = () => { codeInput.value = genCode(); };
+
     btnJoin.onclick = async () => {
       const code = (codeInput.value||"").trim();
       if (!/^\d{5}$/.test(code)) { alert("Zadej 5 číslic."); return; }
@@ -497,30 +548,59 @@ const firebaseConfig = {
       alert("Nastavení uloženo.");
     };
 
+    btnReset.onclick = async () => {
+      if (!isHost) return;
+      const snap = await playersRef.get();
+      const obj = snap.val() || {};
+      const updates = {};
+      for (const k of Object.keys(obj)) {
+        updates[k + "/hits"] = 0;
+        updates[k + "/miss"] = 0;
+        updates[k + "/totalMs"] = 0;
+      }
+      await playersRef.update(updates);
+      alert("Skóre vynulováno.");
+    };
+
     btnStart.onclick = async () => {
       if (!isHost) return;
+
       hostRunning = true;
-      // clear actions (optional)
+
+      // apply settings + reset round
+      await initRoomDefaults();
+
+      // clear actions
       try { await actionsRef.remove(); } catch {}
-      await stateRef.update({ phase:"running", hostRunning:true, resolved:true, round:0 });
+
+      const gls = clamp(parseInt(gameLengthSec.value,10)||60,1,36000);
+      const startedAt = now();
+      const endsAt = startedAt + gls*1000;
+
+      await stateRef.update({
+        phase:"running",
+        hostRunning:true,
+        resolved:true,
+        round:0,
+        gameStartedAt: startedAt,
+        gameEndsAt: endsAt
+      });
+
+      // local stop timer (host convenience)
+      clearTimeout(stopTimer);
+      stopTimer = setTimeout(async ()=>{
+        try { await stateRef.update({ phase:"stopped", hostRunning:false }); } catch {}
+      }, gls*1000 + 50);
+
       await hostAdvanceRound("start");
     };
 
     btnStop.onclick = async () => {
       if (!isHost) return;
       hostRunning = false;
+      clearTimeout(stopTimer);
       await stateRef.update({ phase:"stopped", hostRunning:false });
     };
-
-    // when state says hostRunning, reflect locally
-    // (simple polling)
-    setInterval(async ()=>{
-      if (!roomCode || !isHost) return;
-      try {
-        const st = (await stateRef.get()).val() || {};
-        hostRunning = !!st.hostRunning;
-      } catch {}
-    }, 1500);
   </script>
 </body>
 </html>
