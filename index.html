@@ -83,7 +83,7 @@
 <body>
   <div class="wrap" id="appWrap">
     <div class="card">
-      <div class="big">Multiplayer „Barvy na telefonech“5</div>
+      <div class="big">Multiplayer „Barvy na telefonech“6</div>
       <div class="muted">Host jen ovládá a vidí výsledky. Herní telefony jsou během hry buď barva fullscreen, nebo úplná tma.</div>
     </div>
 
@@ -171,12 +171,35 @@
     </div>
   </div>
 
-  <!-- Fullscreen color -->
-  <div class="fullScreen" id="fs">
+<!-- Fullscreen color -->
+<div class="fullScreen" id="fs">
+
+  <!-- 🎥 VIDEO POZADÍ -->
+  <video id="bgVideo"
+         autoplay
+         muted
+         loop
+         playsinline
+         preload="auto"
+         style="
+           position:absolute;
+           inset:0;
+           width:100%;
+           height:100%;
+           object-fit:cover;
+           z-index:0;
+           opacity:0.25;">
+    <source src="video.mp4" type="video/mp4">
+  </video>
+
+  <!-- OBSAH NAD VIDEEM -->
+  <div style="position:relative; z-index:1; text-align:center;">
     <div class="fsText" id="fsText">Tvoje barva!</div>
     <div class="tapHint">Klepni kamkoliv</div>
     <div class="fsSub" id="fsSub">…</div>
   </div>
+
+</div>
 
   <!-- Fullscreen idle (ztmavení) -->
   <div class="idleScreen" id="idle"></div>
