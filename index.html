@@ -30,7 +30,7 @@
       align-items: center; justify-content: center; flex-direction: column;
       touch-action: manipulation;
     }
-    .fsText { font-size: 28px; font-weight: 900; text-shadow: 0 2px 14px rgba(0,0,0,.35); }
+    .fsText { font-size: 34px; font-weight: 900; text-shadow: 0 2px 14px rgba(0,0,0,.35); }
     .fsSub { margin-top: 10px; font-size: 14px; opacity:.9; }
     .tapHint { margin-top: 18px; font-size: 16px; padding: 10px 14px; border-radius: 999px; background: rgba(0,0,0,.18); }
 
@@ -40,12 +40,50 @@
       display: none;
       background: #000;
     }
+
+    /* ✅ NOVÉ: editor barev */
+    .colorList { display:flex; flex-direction:column; gap:10px; margin-top:10px; }
+    .colorRow {
+      display:grid;
+      grid-template-columns: 44px 1fr 1fr 110px;
+      gap:10px;
+      align-items:center;
+      padding:10px;
+      border-radius:14px;
+      border: 1px solid rgba(255,255,255,.10);
+      background: rgba(0,0,0,.12);
+    }
+    .colorRow input[type="color"]{
+      width:44px; height:44px; padding:0; border-radius:12px; border: 1px solid rgba(255,255,255,.18);
+      background: transparent;
+    }
+    .smallInput { padding: 10px 12px; border-radius: 12px; font-size: 15px; }
+    .previewPill{
+      justify-self:end;
+      display:flex;
+      gap:8px;
+      align-items:center;
+      padding: 8px 10px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.08);
+      font-size: 13px;
+      max-width: 110px;
+      overflow:hidden;
+      white-space:nowrap;
+      text-overflow:ellipsis;
+    }
+    .swatch{
+      width:14px; height:14px; border-radius: 4px;
+      box-shadow: 0 0 0 1px rgba(0,0,0,.25);
+      flex: 0 0 auto;
+    }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   </style>
 </head>
 <body>
   <div class="wrap" id="appWrap">
     <div class="card">
-      <div class="big">Multiplayer „Barvy na telefonech“4</div>
+      <div class="big">Multiplayer „Barvy na telefonech“5</div>
       <div class="muted">Host jen ovládá a vidí výsledky. Herní telefony jsou během hry buď barva fullscreen, nebo úplná tma.</div>
     </div>
 
@@ -92,7 +130,14 @@
       <label class="muted">Délka hry (s) – po vypršení se sama zastaví</label>
       <input id="gameLengthSec" inputmode="numeric" value="60" />
 
-      <div style="height:10px"></div>
+      <!-- ✅ NOVÉ: Konfigurace barev -->
+      <div style="height:14px"></div>
+      <div class="big" style="font-size:16px">Barvy + jméno + emoji</div>
+      <div class="muted">Použije se prvních <span class="mono" id="playersCountMirror">4</span> řádků. Jméno je volitelné. Emoji může být třeba 🔴 🟢 🟡 ⚡️ 🐸.</div>
+
+      <div class="colorList" id="colorList"></div>
+
+      <div style="height:12px"></div>
       <div class="row">
         <button id="btnApply">Uložit nastavení</button>
         <button id="btnStart">Start hry</button>
@@ -217,23 +262,125 @@
     const fsSub = $("fsSub");
     const idle = $("idle");
 
-    // Colors (až 10)
-    const COLORS = [
-      {key:"red",    label:"Červená",  css:"#ff3b30"},
-      {key:"green",  label:"Zelená",   css:"#34c759"},
-      {key:"blue",   label:"Modrá",    css:"#007aff"},
-      {key:"yellow", label:"Žlutá",    css:"#ffd60a"},
-      {key:"purple", label:"Fialová",  css:"#af52de"},
-      {key:"orange", label:"Oranžová", css:"#ff9500"},
-      {key:"pink",   label:"Růžová",   css:"#ff2d55"},
-      {key:"cyan",   label:"Azurová",  css:"#5ac8fa"},
-      {key:"lime",   label:"Limet",    css:"#bfff00"},
-      {key:"white",  label:"Bílá",     css:"#ffffff"},
+    // ✅ NOVÉ: UI pro barvy
+    const colorListEl = $("colorList");
+    const playersCountMirror = $("playersCountMirror");
+
+    // Colors defaults (až 10) – klíče jsou stabilní pozice barvy (c1..c10)
+    const DEFAULT_COLOR_CONFIG = [
+      { key:"c1", label:"Červená",  css:"#ff3b30", emoji:"🔴" },
+      { key:"c2", label:"Zelená",   css:"#34c759", emoji:"🟢" },
+      { key:"c3", label:"Modrá",    css:"#007aff", emoji:"🔵" },
+      { key:"c4", label:"Žlutá",    css:"#ffd60a", emoji:"🟡" },
+      { key:"c5", label:"Fialová",  css:"#af52de", emoji:"🟣" },
+      { key:"c6", label:"Oranžová", css:"#ff9500", emoji:"🟠" },
+      { key:"c7", label:"Růžová",   css:"#ff2d55", emoji:"🌸" },
+      { key:"c8", label:"Azurová",  css:"#5ac8fa", emoji:"💧" },
+      { key:"c9", label:"Limet",    css:"#bfff00", emoji:"🍋" },
+      { key:"c10",label:"Bílá",     css:"#ffffff", emoji:"⚪️" },
     ];
 
-    function colorByKey(k){
-      return COLORS.find(x=>x.key===k) || {key:k,label:k,css:"#222"};
+    // ✅ NOVÉ: aktuální konfigurace (může přijít ze state)
+    let currentColorConfig = DEFAULT_COLOR_CONFIG.slice();
+
+    function normalizeEmoji(s){
+      const t = (s || "").trim();
+      if (!t) return "";
+      // necháme uživateli i víc znaků (např. ⚡️), ale ořízneme šíleně dlouhé
+      return t.length > 6 ? t.slice(0,6) : t;
     }
+
+    function safeLabel(s){
+      return (s || "").trim();
+    }
+
+    function activeConfigForPlayers(n){
+      const nn = clamp(parseInt(n||4,10),2,10);
+      return (currentColorConfig || DEFAULT_COLOR_CONFIG).slice(0, nn);
+    }
+
+    function configByKey(k){
+      const cfg = (currentColorConfig || DEFAULT_COLOR_CONFIG).find(x=>x.key===k);
+      return cfg || { key:k, label:"", css:"#222", emoji:"" };
+    }
+
+    // ✅ NOVÉ: vykreslení editoru barev
+    function renderColorEditor(){
+      colorListEl.innerHTML = "";
+      const n = clamp(parseInt(playersCount.value||4,10),2,10);
+      playersCountMirror.textContent = String(n);
+
+      // zajisti délku 10
+      if (!currentColorConfig || currentColorConfig.length !== 10){
+        const map = new Map((currentColorConfig||[]).map(x=>[x.key,x]));
+        currentColorConfig = DEFAULT_COLOR_CONFIG.map(d => {
+          const v = map.get(d.key);
+          return v ? { key:d.key, label: v.label ?? d.label, css: v.css ?? d.css, emoji: v.emoji ?? d.emoji } : {...d};
+        });
+      }
+
+      for (let i=0;i<10;i++){
+        const cfg = currentColorConfig[i];
+        const enabled = (i < n);
+        const row = document.createElement("div");
+        row.className = "colorRow";
+        row.style.opacity = enabled ? "1" : ".45";
+
+        const color = document.createElement("input");
+        color.type = "color";
+        color.value = cfg.css || "#222222";
+        color.disabled = !enabled;
+
+        const label = document.createElement("input");
+        label.className = "smallInput";
+        label.placeholder = "Jméno (volitelné)";
+        label.value = cfg.label || "";
+        label.disabled = !enabled;
+
+        const emoji = document.createElement("input");
+        emoji.className = "smallInput";
+        emoji.placeholder = "Emoji";
+        emoji.value = cfg.emoji || "";
+        emoji.disabled = !enabled;
+
+        const preview = document.createElement("div");
+        preview.className = "previewPill";
+        const sw = document.createElement("div");
+        sw.className = "swatch";
+        sw.style.background = cfg.css || "#222";
+        const txt = document.createElement("div");
+        txt.style.overflow = "hidden";
+        txt.style.textOverflow = "ellipsis";
+        txt.style.whiteSpace = "nowrap";
+        txt.textContent = `${(cfg.emoji||"").trim()} ${((cfg.label||"") || ("Barva " + (i+1)))}`.trim();
+
+        preview.appendChild(sw);
+        preview.appendChild(txt);
+
+        const sync = () => {
+          cfg.css = color.value;
+          cfg.label = safeLabel(label.value);
+          cfg.emoji = normalizeEmoji(emoji.value);
+          sw.style.background = cfg.css || "#222";
+          txt.textContent = `${(cfg.emoji||"").trim()} ${((cfg.label||"") || ("Barva " + (i+1)))}`.trim();
+        };
+
+        color.addEventListener("input", sync);
+        label.addEventListener("input", sync);
+        emoji.addEventListener("input", sync);
+
+        row.appendChild(color);
+        row.appendChild(label);
+        row.appendChild(emoji);
+        row.appendChild(preview);
+
+        colorListEl.appendChild(row);
+      }
+    }
+
+    playersCount.addEventListener("change", () => {
+      renderColorEditor();
+    });
 
     // Firebase state
     let app, db;
@@ -245,17 +392,17 @@
     let actionsRef = null;
     let playersRef = null;
 
-    // ✅ NOVÉ reference pro „host alive“
+    // ✅ hostAlive
     let hostAliveRef = null;
 
-    // ✅ NOVÉ: ukládáme si svůj device ref, ať můžeme rychle odejít
+    // ✅ my device ref
     let myDeviceRef = null;
 
     // Host runtime
     let hostRunning = false;
     let stopTimer = null;
 
-    // ✅ nový host ticker na timeouty konkrétních telefonů
+    // host ticker
     let hostTickTimer = null;
 
     function setConn(ok) {
@@ -270,9 +417,16 @@
       if (!playersObj) return;
       Object.values(playersObj).forEach(p => {
         const avg = p.hits > 0 ? Math.round(p.totalMs / p.hits) : "—";
+
         const tr = document.createElement("tr");
+
+        const labelTxt = `${(p.emoji||"").trim()} ${(p.label||"").trim()}`.trim() || "—";
+
         tr.innerHTML = `
-          <td>${p.label}</td>
+          <td>
+            <span class="swatch" style="display:inline-block; vertical-align:middle; margin-right:8px; background:${p.css||"#222"}"></span>
+            <span style="vertical-align:middle;">${labelTxt}</span>
+          </td>
           <td>${p.hits||0}</td>
           <td>${avg}</td>
           <td>${p.miss||0}</td>
@@ -281,7 +435,6 @@
       });
     }
 
-    // ✅ schování/zobrazení UI (data nesmí být vidět na herních telefonech během running)
     function hideUI(){ appWrap.style.display = "none"; }
     function showUI(){ appWrap.style.display = ""; }
 
@@ -305,7 +458,6 @@
       idle.style.display = "none";
     }
 
-    // ✅ NOVÉ: kompletní odpojení z místnosti (hráčům se zavolá když host zmizí)
     async function leaveRoom(reason){
       try { hostRunning = false; } catch {}
       try { clearTimeout(stopTimer); } catch {}
@@ -315,7 +467,6 @@
       try { showUI(); } catch {}
 
       try {
-        // odpoj listeners (best-effort)
         if (devicesRef) devicesRef.off();
         if (playersRef) playersRef.off();
         if (stateRef) stateRef.off();
@@ -325,7 +476,6 @@
 
       try { if (myDeviceRef) await myDeviceRef.remove(); } catch {}
 
-      // reset UI
       try {
         hostCard.style.display = "none";
         joinCard.style.display = "";
@@ -337,7 +487,6 @@
         statusLine.textContent = reason ? ("Odpojeno: " + reason) : "Odpojeno.";
       } catch {}
 
-      // reset state vars
       roomCode = null;
       isHost = false;
       roomRef = null;
@@ -353,8 +502,6 @@
       if (!app) {
         app = firebase.initializeApp(firebaseConfig);
         db = firebase.database();
-
-        // real connection indicator
         db.ref(".info/connected").on("value", (snap) => setConn(!!snap.val()));
       }
     }
@@ -367,8 +514,6 @@
       devicesRef = roomRef.child("devices");
       actionsRef = roomRef.child("actions");
       playersRef = roomRef.child("players");
-
-      // ✅ NOVÉ: hostAlive zámek
       hostAliveRef = roomRef.child("hostAlive");
 
       roomCodeLabel.textContent = roomCode;
@@ -393,15 +538,12 @@
         isHost = (snap.val() === deviceId);
       }
 
-      // ✅ NOVÉ: host „vlastní“ hostAlive a když odpadne, hostAlive zmizí + místnost se resetne
+      // host alive / cleanup
       if (isHost) {
         try {
           await hostAliveRef.set({ id: deviceId, at: now() });
           hostAliveRef.onDisconnect().remove();
 
-          // ✅ když host zmizí, smaž state + actions + players (a tím se hra „zruší“)
-          // Pozn.: devices se smažou samy přes onDisconnect().remove()
-          hostAliveRef.onDisconnect().then(()=>{}).catch(()=>{});
           stateRef.onDisconnect().remove();
           actionsRef.onDisconnect().remove();
           playersRef.onDisconnect().remove();
@@ -412,11 +554,10 @@
       rolePill.style.background = isHost ? "rgba(42,102,255,.22)" : "rgba(255,214,10,.18)";
       hostCard.style.display = isHost ? "" : "none";
 
-      // ✅ NOVÉ: když hostAlive zmizí a já nejsem host => automaticky leaveRoom()
+      // když host zmizí, hráči odejdou
       if (!isHost) {
         hostAliveRef.on("value", (s) => {
           if (!s.exists()) {
-            // host odešel => všichni pryč
             leaveRoom("Host odešel – místnost zrušena");
           }
         });
@@ -426,6 +567,8 @@
       if (isHost) {
         const st = await stateRef.get();
         if (!st.exists() || !st.val()?.phase) await initRoomDefaults();
+        // ✅ editor barev vykresli až teď (host)
+        renderColorEditor();
       }
 
       // devices count
@@ -445,7 +588,7 @@
         actionsRef.limitToLast(200).on("child_added", snap2 => onAction(snap2.val()));
       }
 
-      // ✅ NOVÉ: když host zavře stránku normálně, zkus to zrušit hned (best-effort)
+      // host cleanup best-effort
       if (isHost) {
         const hostCleanup = async () => {
           try { hostRunning = false; } catch {}
@@ -461,24 +604,62 @@
       }
     }
 
+    // ✅ NOVÉ: vezmi colorConfig ze state, nebo nech default
+    function applyColorConfigFromState(st){
+      const cfg = st && st.colorConfig;
+      if (Array.isArray(cfg) && cfg.length) {
+        // znormalizuj na 10 položek podle DEFAULT key order
+        const map = new Map(cfg.map(x=>[x.key,x]));
+        currentColorConfig = DEFAULT_COLOR_CONFIG.map(d => {
+          const v = map.get(d.key);
+          return v ? {
+            key: d.key,
+            css: (v.css || d.css),
+            label: (v.label ?? d.label),
+            emoji: (v.emoji ?? d.emoji)
+          } : {...d};
+        });
+      } else {
+        currentColorConfig = DEFAULT_COLOR_CONFIG.slice();
+      }
+
+      // když jsem host, a UI existuje, udrž náhled editoru synchronní
+      if (isHost && hostCard.style.display !== "none") {
+        renderColorEditor();
+      }
+    }
+
     async function initRoomDefaults() {
       const n = clamp(parseInt(playersCount.value,10)||4,2,10);
       const dur = clamp(parseInt(durationMs.value,10)||1800,200,20000);
       const gls = clamp(parseInt(gameLengthSec.value,10)||60,1,36000);
 
+      // ✅ NOVÉ: uložíme do state i konfiguraci barev
+      const cfg = (currentColorConfig || DEFAULT_COLOR_CONFIG).map(x => ({
+        key: x.key,
+        css: x.css,
+        label: safeLabel(x.label),
+        emoji: normalizeEmoji(x.emoji)
+      }));
+
+      // ✅ NOVÉ: playersRef bude podle prvních N konfigurací
+      const active = cfg.slice(0, n);
       const players = {};
       for (let i=0;i<n;i++) {
-        const c = COLORS[i];
-        players[c.key] = { key:c.key, label:c.label, css:c.css, hits:0, miss:0, totalMs:0 };
+        const c = active[i];
+        const fallbackName = "Barva " + (i+1);
+        const label = (c.label && c.label.trim()) ? c.label.trim() : fallbackName;
+        const emoji = (c.emoji && c.emoji.trim()) ? c.emoji.trim() : "";
+        players[c.key] = { key:c.key, label:label, css:c.css, emoji:emoji, hits:0, miss:0, totalMs:0 };
       }
       await playersRef.set(players);
+
       await stateRef.update({
         phase: "lobby",
         playersCount: n,
         durationMs: dur,
         gameLengthSec: gls,
 
-        // původní pole nechávám, ale nově se nepoužívají jako jediný cíl:
         round: 0,
         currentDevice: null,
         currentColor: null,
@@ -489,9 +670,11 @@
         gameStartedAt: null,
         gameEndsAt: null,
 
-        // ✅ nové mapy: deviceId -> colorKey | null, deviceId -> shownAt(ms)
         deviceColors: null,
-        shownAtMap: null
+        shownAtMap: null,
+
+        // ✅ NOVÉ:
+        colorConfig: cfg
       });
     }
 
@@ -499,7 +682,9 @@
       roundLabel.textContent = st.round || 0;
       phaseLabel.textContent = st.phase || "-";
 
-      // HOST: UI vidí vždy
+      // ✅ NOVÉ: vždy aplikuj config ze state
+      applyColorConfigFromState(st);
+
       if (isHost) {
         showUI();
         hideFullscreen();
@@ -511,7 +696,6 @@
         return;
       }
 
-      // HRÁČ: lobby/stop -> UI vidět může; running -> UI nikdy
       if (st.phase === "lobby") {
         showUI();
         statusLine.textContent = "Lobby – čekám na start od hosta…";
@@ -520,13 +704,16 @@
       }
 
       if (st.phase === "running") {
-        // ✅ v running je UI skryté a rozhoduje jen deviceColors
         const dc = st.deviceColors || {};
         const myColorKey = dc[deviceId] || null;
 
         if (myColorKey) {
-          const c = colorByKey(myColorKey);
-          showFullscreen(c.css, c.label, "Klepni kamkoliv");
+          const c = configByKey(myColorKey);
+
+          const niceName = (c.label && c.label.trim()) ? c.label.trim() : "Tvoje barva";
+          const niceEmoji = (c.emoji && c.emoji.trim()) ? (c.emoji.trim() + " ") : "";
+
+          showFullscreen(c.css || "#222", (niceEmoji + niceName).trim(), "Klepni kamkoliv");
         } else {
           showIdle();
         }
@@ -540,7 +727,7 @@
       }
     }
 
-    // ====== HOST HELPERS pro nová pravidla ======
+    // ====== HOST HELPERS ======
 
     async function getHostId(){
       return (await stateRef.child("hostId").get()).val();
@@ -556,22 +743,22 @@
       return ids;
     }
 
+    function getActiveColorKeys(nPlayers){
+      const cfg = (currentColorConfig || DEFAULT_COLOR_CONFIG).slice(0, nPlayers);
+      return cfg.map(c => c.key);
+    }
+
     function buildInitialDeviceColors(gameDevices, nPlayers) {
-      // gameDevices může být víc než nPlayers -> některé budou null (tmavé)
       const ids = shuffle(gameDevices);
       const dc = {};
       const shownAtMap = {};
-      const colors = COLORS.slice(0, nPlayers).map(c=>c.key);
+      const colorKeys = getActiveColorKeys(nPlayers);
 
-      // všem nastav null (tmavé)
-      for (const id of ids) {
-        dc[id] = null;
-      }
+      for (const id of ids) dc[id] = null;
 
-      // prvním N telefonům přiřaď N barev (každá právě 1×)
       for (let i=0;i<nPlayers;i++){
         const devId = ids[i];
-        const colorKey = colors[i];
+        const colorKey = colorKeys[i];
         dc[devId] = colorKey;
         shownAtMap[devId] = now();
       }
@@ -586,27 +773,16 @@
       return Object.keys(dc || {}).filter(d=>!dc[d]);
     }
 
-    function findDeviceByColor(dc, colorKey){
-      for (const [d,c] of Object.entries(dc||{})){
-        if (c === colorKey) return d;
-      }
-      return null;
-    }
-
-    // ✅ jediná funkce, která udělá přesun/swap podle pravidel
     async function hostHandleEventForDevice(deviceIdThatTriggered, reason) {
-      // reason: "tap" | "timeout"
       const st = (await stateRef.get()).val() || {};
       if (st.phase !== "running") return;
 
-      // auto-stop when time ends
       if (st.gameEndsAt && now() >= st.gameEndsAt) {
         hostRunning = false;
         await stateRef.update({ phase:"stopped", hostRunning:false });
         return;
       }
 
-      // zkontroluj, že je pořád dost telefonů
       const gameDevices = await getConnectedGameDevices();
       const nPlayers = clamp(parseInt(st.playersCount||4,10),2,10);
       if (gameDevices.length < nPlayers) {
@@ -618,97 +794,75 @@
       let dc = st.deviceColors || {};
       let shownAtMap = st.shownAtMap || {};
 
-      // pokud do hry někdo přibyl/ubylo zařízení, doplň klíče (nové zařízení = tmavé)
-      for (const id of gameDevices) {
-        if (!(id in dc)) dc[id] = null;
-      }
+      for (const id of gameDevices) if (!(id in dc)) dc[id] = null;
       for (const id of Object.keys(dc)) {
         if (!gameDevices.includes(id)) {
-          // odpojený telefon odeber
           delete dc[id];
           delete shownAtMap[id];
         }
       }
 
-      const currentColor = dc[deviceIdThatTriggered] || null;
-      if (!currentColor) {
-        // ťuknutí na tmavý telefon ignorujeme
-        return;
-      }
+      const currentColorKey = dc[deviceIdThatTriggered] || null;
+      if (!currentColorKey) return;
 
       const dur = clamp(parseInt(st.durationMs||1800,10),200,20000);
 
-      // statistiky: tap => hit+reaction, timeout => miss
       if (reason === "tap") {
         const tShown = shownAtMap[deviceIdThatTriggered] || st.gameStartedAt || now();
         const reaction = Math.max(0, now() - tShown);
 
-        await playersRef.child(currentColor).transaction(p => {
+        await playersRef.child(currentColorKey).transaction(p => {
           if (!p) return p;
           p.hits = (p.hits||0) + 1;
           p.totalMs = (p.totalMs||0) + reaction;
           return p;
         });
       } else if (reason === "timeout") {
-        await playersRef.child(currentColor).transaction(p => {
+        await playersRef.child(currentColorKey).transaction(p => {
           if (!p) return p;
           p.miss = (p.miss||0) + 1;
           return p;
         });
       }
 
-      // pravidlo: pokud existuje tmavý telefon, barva se přesune tam a původní ztmavne
       const idle = getIdleDevices(dc);
       const colored = getColoredDevices(dc);
-
       const hasIdle = idle.length > 0;
 
       if (hasIdle) {
-        // move color -> random idle phone
         const targetIdle = idle[randInt(0, idle.length-1)];
-
-        // původní ztmavne
         dc[deviceIdThatTriggered] = null;
         delete shownAtMap[deviceIdThatTriggered];
-
-        // cílový ztmavený dostane barvu
-        dc[targetIdle] = currentColor;
+        dc[targetIdle] = currentColorKey;
         shownAtMap[targetIdle] = now();
-
       } else {
-        // žádný tmavý telefon (počet telefonů == počet hráčů) => SWAP s jiným barevným telefonem
         const others = colored.filter(d => d !== deviceIdThatTriggered);
-        if (others.length === 0) return; // bezpečnost
-
+        if (others.length === 0) return;
         const swapWith = others[randInt(0, others.length-1)];
-        const otherColor = dc[swapWith];
+        const otherColorKey = dc[swapWith];
 
-        // swap
-        dc[deviceIdThatTriggered] = otherColor;
-        dc[swapWith] = currentColor;
+        dc[deviceIdThatTriggered] = otherColorKey;
+        dc[swapWith] = currentColorKey;
 
-        // reset časů obou
         shownAtMap[deviceIdThatTriggered] = now();
         shownAtMap[swapWith] = now();
       }
 
-      // pojistka: držet invariant "každá barva právě jednou"
-      const activeColors = COLORS.slice(0, nPlayers).map(c=>c.key);
+      // pojistka invariantu: každá z prvních N barev právě jednou
+      const activeKeys = getActiveColorKeys(nPlayers);
       const count = {};
-      for (const k of activeColors) count[k]=0;
+      for (const k of activeKeys) count[k]=0;
       for (const d of Object.keys(dc)) {
         const c = dc[d];
         if (c && (c in count)) count[c]++;
       }
-
-      const bad = activeColors.some(k => count[k] !== 1);
+      const bad = activeKeys.some(k => count[k] !== 1);
       if (bad) {
         const rebuilt = buildInitialDeviceColors(gameDevices, nPlayers);
         dc = rebuilt.dc;
         shownAtMap = rebuilt.shownAtMap;
       }
 
-      // zvýšíme "kolo" jako počet událostí
       const newRound = (st.round||0) + 1;
 
       await stateRef.update({
@@ -718,14 +872,12 @@
       });
     }
 
-    // host ticker: timeouty pro jednotlivé telefony s barvou
     async function hostTick() {
       if (!isHost || !hostRunning) return;
 
       const st = (await stateRef.get()).val() || {};
       if (st.phase !== "running") return;
 
-      // auto-stop when time ends
       if (st.gameEndsAt && now() >= st.gameEndsAt) {
         hostRunning = false;
         await stateRef.update({ phase:"stopped", hostRunning:false });
@@ -762,7 +914,6 @@
       await hostHandleEventForDevice(act.deviceId, "tap");
     }
 
-    // Tap handling (only when color shown; idle has no listener)
     fs.addEventListener("pointerdown", async (e) => {
       if (!roomCode) return;
       e.preventDefault();
@@ -805,8 +956,8 @@
       if (!isHost) return;
 
       const nPlayers = clamp(parseInt(playersCount.value,10)||4,2,10);
-
       const gameDevices = await getConnectedGameDevices();
+
       if (gameDevices.length < nPlayers) {
         alert(`Nelze spustit hru.\nHráčů: ${nPlayers}\nHerních telefonů: ${gameDevices.length}\n(Počítáno bez hosta)`);
         return;
