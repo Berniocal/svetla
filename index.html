@@ -81,9 +81,20 @@
   </style>
 </head>
 <body>
+  <!-- KEEP AWAKE VIDEO (neviditelné) -->
+<video id="keepAwakeVideo"
+  playsinline
+  muted
+  loop
+  preload="auto"
+  style="position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;">
+  <source
+    src="data:video/mp4;base64,AAAAHGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAAIZnJlZQAAACBtZGF0AAAAAA=="
+    type="video/mp4">
+</video>
   <div class="wrap" id="appWrap">
     <div class="card">
-      <div class="big">Multiplayer „Barvy na telefonech“6</div>
+      <div class="big">Multiplayer „Barvy na telefonech“7</div>
       <div class="muted">Host jen ovládá a vidí výsledky. Herní telefony jsou během hry buď barva fullscreen, nebo úplná tma.</div>
     </div>
 
@@ -231,7 +242,41 @@
     const now = ()=>Date.now();
     const clamp = (n,a,b)=>Math.max(a,Math.min(b,n));
     const randInt = (a,b)=>Math.floor(Math.random()*(b-a+1))+a;
+// ================= KEEP AWAKE =================
+const keepAwakeVideo = document.getElementById("keepAwakeVideo");
+let wakeLock = null;
 
+async function keepAwakeStart(){
+  try {
+    if ("wakeLock" in navigator && !wakeLock) {
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release",()=>wakeLock=null);
+    }
+  } catch {}
+
+  try {
+    await keepAwakeVideo.play();
+  } catch {}
+}
+
+async function keepAwakeStop(){
+  try {
+    if (wakeLock) await wakeLock.release();
+  } catch {}
+  wakeLock = null;
+
+  try {
+    keepAwakeVideo.pause();
+    keepAwakeVideo.currentTime = 0;
+  } catch {}
+}
+
+document.addEventListener("visibilitychange", ()=>{
+  if (document.visibilityState === "visible") {
+    keepAwakeStart();
+  }
+});
+// ==============================================
     function shuffle(arr){
       const a = arr.slice();
       for(let i=a.length-1;i>0;i--){
@@ -462,21 +507,23 @@
     function showUI(){ appWrap.style.display = ""; }
 
     function showFullscreen(colorCss, label, extra) {
-      hideUI();
-      idle.style.display = "none";
-      fs.style.display = "flex";
-      fs.style.background = colorCss;
-      fsText.textContent = label;
-      fsSub.textContent = extra || "";
-    }
+  keepAwakeStart();   // ← PŘIDAT
+  hideUI();
+  idle.style.display = "none";
+  fs.style.display = "flex";
+  fs.style.background = colorCss;
+  fsText.textContent = label;
+  fsSub.textContent = extra || "";
+}
     function hideFullscreen() {
       fs.style.display = "none";
     }
     function showIdle() {
-      hideUI();
-      hideFullscreen();
-      idle.style.display = "block";
-    }
+  keepAwakeStart();   // ← PŘIDAT
+  hideUI();
+  hideFullscreen();
+  idle.style.display = "block";
+}
     function hideIdle() {
       idle.style.display = "none";
     }
@@ -938,12 +985,13 @@
     }
 
     fs.addEventListener("pointerdown", async (e) => {
-      if (!roomCode) return;
-      e.preventDefault();
-      try {
-        await actionsRef.push({ type:"tap", deviceId, at: now() });
-      } catch {}
-    });
+  keepAwakeStart();   // ← iOS vyžaduje gesture
+  if (!roomCode) return;
+  e.preventDefault();
+  try {
+    await actionsRef.push({ type:"tap", deviceId, at: now() });
+  } catch {}
+});
 
     // Buttons
     btnRandom.onclick = () => { codeInput.value = genCode(); };
@@ -1024,6 +1072,7 @@
       hostRunning = false;
       clearTimeout(stopTimer);
       if (hostTickTimer) { clearInterval(hostTickTimer); hostTickTimer = null; }
+      keepAwakeStop();
       await stateRef.update({ phase:"stopped", hostRunning:false });
     };
   </script>
