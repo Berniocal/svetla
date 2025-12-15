@@ -43,10 +43,10 @@
   </style>
 </head>
 <body>
-  <div class="wrap">
+  <div class="wrap" id="appWrap">
     <div class="card">
       <div class="big">Multiplayer „Barvy na telefonech“</div>
-      <div class="muted">Host jen ovládá a vidí výsledky. Herní telefony ztmavnou, pokud nejsou na řadě.</div>
+      <div class="muted">Host jen ovládá a vidí výsledky. Herní telefony jsou během hry buď barva fullscreen, nebo úplná tma.</div>
     </div>
 
     <div class="card" id="joinCard">
@@ -173,6 +173,7 @@
     })();
 
     // UI refs
+    const appWrap = $("appWrap");
     const joinCard = $("joinCard");
     const hostCard = $("hostCard");
     const statusCard = $("statusCard");
@@ -259,7 +260,12 @@
       });
     }
 
+    // ✅ schování/zobrazení UI (data nesmí být vidět na herních telefonech během running)
+    function hideUI(){ appWrap.style.display = "none"; }
+    function showUI(){ appWrap.style.display = ""; }
+
     function showFullscreen(colorCss, label, extra) {
+      hideUI();                 // ✅ během hry schovat všechny karty
       idle.style.display = "none";
       fs.style.display = "flex";
       fs.style.background = colorCss;
@@ -270,6 +276,7 @@
       fs.style.display = "none";
     }
     function showIdle() {
+      hideUI();                 // ✅ během hry schovat všechny karty
       hideFullscreen();
       idle.style.display = "block";
     }
@@ -377,8 +384,9 @@
       roundLabel.textContent = st.round || 0;
       phaseLabel.textContent = st.phase || "-";
 
-      // HOST: nikdy neukazuje herní fullscreen ani idle
+      // HOST: UI vidí vždy
       if (isHost) {
+        showUI();
         hideFullscreen();
         hideIdle();
         statusLine.textContent =
@@ -388,24 +396,28 @@
         return;
       }
 
-      // HRÁČ: při running – pokud nejsem cíl, ztmavím
+      // HRÁČ: lobby/stop -> UI vidět může; running -> UI nikdy
       if (st.phase === "lobby") {
+        showUI();
         statusLine.textContent = "Lobby – čekám na start od hosta…";
         hideFullscreen(); hideIdle();
         return;
       }
+
       if (st.phase === "running") {
-        statusLine.textContent = "Hra běží…";
+        // ✅ během running nesmí být vidět žádná data
         const amITarget = (st.currentDevice === deviceId);
         if (amITarget && st.currentColor) {
           const c = COLORS.find(x=>x.key===st.currentColor) || {css:"#222", label:"Barva"};
           showFullscreen(c.css, c.label, "Kolo " + (st.round||0));
         } else {
-          showIdle(); // černá obrazovka bez textu
+          showIdle();
         }
         return;
       }
+
       if (st.phase === "stopped") {
+        showUI();
         statusLine.textContent = "Stop.";
         hideFullscreen(); hideIdle();
       }
@@ -420,10 +432,13 @@
       const hostId = (await stateRef.child("hostId").get()).val();
       devIds = devIds.filter(id => id !== hostId);
 
-      if (devIds.length === 0) return null;
-
       const st = (await stateRef.get()).val() || {};
       const n = clamp(parseInt(st.playersCount||4,10),2,10);
+
+      // ✅ pojistka: hráčů nesmí být víc než herních telefonů
+      if (devIds.length < n) return null;
+      if (devIds.length === 0) return null;
+
       const activeColors = COLORS.slice(0,n).map(c=>c.key);
 
       const nextDevice = devIds[randInt(0, devIds.length-1)];
@@ -445,7 +460,12 @@
       }
 
       const pick = await hostPickNext();
-      if (!pick) return;
+      if (!pick) {
+        // ✅ když ubudou telefony, hra se stopne
+        hostRunning = false;
+        await stateRef.update({ phase:"stopped", hostRunning:false });
+        return;
+      }
 
       const newRound = (await stateRef.child("round").get()).val() || 0;
       resolvedForRound.delete(String(newRound+1));
@@ -564,6 +584,20 @@
 
     btnStart.onclick = async () => {
       if (!isHost) return;
+
+      // ✅ kontrola: hráčů <= herních telefonů (bez hosta)
+      const devSnap = await devicesRef.get();
+      const devObj = devSnap.val() || {};
+      const devIds = Object.keys(devObj);
+
+      const hostId = (await stateRef.child("hostId").get()).val();
+      const gameDevices = devIds.filter(id => id !== hostId);
+
+      const nPlayers = clamp(parseInt(playersCount.value,10)||4,2,10);
+      if (gameDevices.length < nPlayers) {
+        alert(`Nelze spustit hru.\nHráčů: ${nPlayers}\nHerních telefonů: ${gameDevices.length}\n(Počítáno bez hosta)`);
+        return;
+      }
 
       hostRunning = true;
 
