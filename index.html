@@ -94,7 +94,7 @@
 </video>
   <div class="wrap" id="appWrap">
     <div class="card">
-      <div class="big">Multiplayer „Barvy na telefonech“7</div>
+      <div class="big">Multiplayer „Barvy na telefonech“8</div>
       <div class="muted">Host jen ovládá a vidí výsledky. Herní telefony jsou během hry buď barva fullscreen, nebo úplná tma.</div>
     </div>
 
@@ -660,15 +660,18 @@ document.addEventListener("visibilitychange", ()=>{
 
       // host cleanup best-effort
       if (isHost) {
-        const hostCleanup = async () => {
-          try { hostRunning = false; } catch {}
-          try { if (hostTickTimer) { clearInterval(hostTickTimer); hostTickTimer = null; } } catch {}
-          try { clearTimeout(stopTimer); } catch {}
-          try { await hostAliveRef.remove(); } catch {}
-          try { await stateRef.remove(); } catch {}
-          try { await actionsRef.remove(); } catch {}
-          try { await playersRef.remove(); } catch {}
-        };
+  const hostCleanup = async () => {
+    try {
+      console.log("🔥 Host odešel – mažu celou místnost");
+      await roomRef.remove(); // 💥 TOTO JE KLÍČ
+    } catch (e) {
+      console.warn("Cleanup failed", e);
+    }
+  };
+
+  window.addEventListener("pagehide", hostCleanup);
+  window.addEventListener("beforeunload", hostCleanup);
+}
         window.addEventListener("pagehide", () => { hostCleanup().catch(()=>{}); });
         window.addEventListener("beforeunload", () => { hostCleanup().catch(()=>{}); });
       }
