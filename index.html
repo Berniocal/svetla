@@ -94,7 +94,7 @@
 </video>
   <div class="wrap" id="appWrap">
     <div class="card">
-      <div class="big">Multiplayer „Barvy na telefonech“8</div>
+      <div class="big">Multiplayer „Barvy na telefonech“9</div>
       <div class="muted">Host jen ovládá a vidí výsledky. Herní telefony jsou během hry buď barva fullscreen, nebo úplná tma.</div>
     </div>
 
@@ -135,11 +135,11 @@
 
       <div style="height:10px"></div>
       <label class="muted">Čas na stisk (ms)</label>
-      <input id="durationMs" inputmode="numeric" value="1800" />
+      <input id="durationMs" inputmode="numeric" value="2500" />
 
       <div style="height:10px"></div>
       <label class="muted">Délka hry (s) – po vypršení se sama zastaví</label>
-      <input id="gameLengthSec" inputmode="numeric" value="60" />
+      <input id="gameLengthSec" inputmode="numeric" value="30" />
 
       <!-- ✅ NOVÉ: Konfigurace barev -->
       <div style="height:14px"></div>
@@ -672,9 +672,6 @@ document.addEventListener("visibilitychange", ()=>{
   window.addEventListener("pagehide", hostCleanup);
   window.addEventListener("beforeunload", hostCleanup);
 }
-        window.addEventListener("pagehide", () => { hostCleanup().catch(()=>{}); });
-        window.addEventListener("beforeunload", () => { hostCleanup().catch(()=>{}); });
-      }
     }
 
     // ✅ NOVÉ: vezmi colorConfig ze state, nebo nech default
