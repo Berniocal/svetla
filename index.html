@@ -94,7 +94,7 @@
 </video>
   <div class="wrap" id="appWrap">
     <div class="card">
-      <div class="big">Multiplayer „Barvy na telefonech“9</div>
+      <div class="big">Multiplayer „Barvy na telefonech“10</div>
       <div class="muted">Host jen ovládá a vidí výsledky. Herní telefony jsou během hry buď barva fullscreen, nebo úplná tma.</div>
     </div>
 
@@ -165,6 +165,7 @@
         <div class="pill">Místnost: <span class="code" id="roomCodeLabel">-----</span></div>
         <div class="pill">Kolo: <span id="roundLabel">0</span></div>
         <div class="pill">Stav: <span id="phaseLabel">-</span></div>
+    <div class="pill">Zbývá: <span id="countdownLabel">—</span></div>
       </div>
       <div style="height:10px"></div>
       <div class="muted" id="statusLine">Čekám…</div>
@@ -322,6 +323,7 @@ document.addEventListener("visibilitychange", ()=>{
     const statusLine = $("statusLine");
     const roundLabel = $("roundLabel");
     const phaseLabel = $("phaseLabel");
+    const countdownLabel = $("countdownLabel");
 
     const scoreTableBody = $("scoreTable").querySelector("tbody");
 
@@ -469,6 +471,7 @@ document.addEventListener("visibilitychange", ()=>{
     // Host runtime
     let hostRunning = false;
     let stopTimer = null;
+    let countdownTimer = null;
 
     // host ticker
     let hostTickTimer = null;
@@ -529,6 +532,7 @@ document.addEventListener("visibilitychange", ()=>{
     }
 
     async function leaveRoom(reason){
+      stopHostCountdown();
       try { hostRunning = false; } catch {}
       try { clearTimeout(stopTimer); } catch {}
       try { if (hostTickTimer) { clearInterval(hostTickTimer); hostTickTimer = null; } } catch {}
@@ -756,15 +760,22 @@ document.addEventListener("visibilitychange", ()=>{
       applyColorConfigFromState(st);
 
       if (isHost) {
-        showUI();
-        hideFullscreen();
-        hideIdle();
-        statusLine.textContent =
-          st.phase === "running"
-            ? "Hra běží… (host není ve hře)"
-            : (st.phase === "lobby" ? "Lobby – nastav a dej Start." : (st.phase === "stopped" ? "Stop." : "…"));
-        return;
-      }
+  showUI();
+  hideFullscreen();
+  hideIdle();
+
+  if (st.phase === "running" && st.gameEndsAt) {
+    statusLine.textContent = "Hra běží… (host není ve hře)";
+    startHostCountdown(st.gameEndsAt);
+  } else {
+    stopHostCountdown();
+    statusLine.textContent =
+      st.phase === "lobby"
+        ? "Lobby – nastav a dej Start."
+        : (st.phase === "stopped" ? "Stop." : "…");
+  }
+  return;
+}
 
       if (st.phase === "lobby") {
         showUI();
@@ -797,6 +808,38 @@ document.addEventListener("visibilitychange", ()=>{
       }
     }
 
+function startHostCountdown(gameEndsAt){
+  stopHostCountdown();
+
+  function tick(){
+    const remainingMs = gameEndsAt - Date.now();
+    if (remainingMs <= 0) {
+      countdownLabel.textContent = "0:00";
+      stopHostCountdown();
+      return;
+    }
+
+    const totalSec = Math.ceil(remainingMs / 1000);
+    const min = Math.floor(totalSec / 60);
+    const sec = totalSec % 60;
+
+    countdownLabel.textContent = `${min}:${sec.toString().padStart(2,"0")}`;
+  }
+
+  tick();
+  countdownTimer = setInterval(tick, 250);
+}
+
+function stopHostCountdown(){
+  if (countdownTimer) {
+    clearInterval(countdownTimer);
+    countdownTimer = null;
+  }
+  if (countdownLabel) {
+    countdownLabel.textContent = "—";
+  }
+}
+    
     // ====== HOST HELPERS ======
 
     async function getHostId(){
@@ -1073,6 +1116,7 @@ document.addEventListener("visibilitychange", ()=>{
       clearTimeout(stopTimer);
       if (hostTickTimer) { clearInterval(hostTickTimer); hostTickTimer = null; }
       keepAwakeStop();
+      stopHostCountdown();
       await stateRef.update({ phase:"stopped", hostRunning:false });
     };
   </script>
