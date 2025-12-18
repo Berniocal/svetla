@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Barvy – multiplayer</title>
-  <link rel="manifest" href="manifest.json">
+<link rel="manifest" href="./manifest.json">
   <meta name="theme-color" content="#111111" />
   <style>
     :root { --bg:#0f1115; --card:#171a22; --text:#e9ecf1; --muted:#aab2c0; }
@@ -1201,5 +1201,18 @@ fs.addEventListener("pointerdown", async (e) => {
       await stateRef.update({ phase:"stopped", hostRunning:false });
     };
   </script>
+  <script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', async () => {
+      try {
+        const reg = await navigator.serviceWorker.register('./sw.js', { scope: './' });
+        // volitelně: console.log('SW registered', reg.scope);
+      } catch (e) {
+        console.error('SW register failed', e);
+      }
+    });
+  }
+</script>
+
 </body>
 </html>
