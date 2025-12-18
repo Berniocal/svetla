@@ -82,6 +82,10 @@
 html, body{
   overscroll-behavior: none;   /* blokuje pull-to-refresh */
 }
+body.game-lock{
+  overflow: hidden;
+  touch-action: none;
+}
 
 
   </style>
@@ -343,17 +347,17 @@ function isGameScreenActive(){
 
 // blokuj posouvání a pull-to-refresh během hry
 document.addEventListener("touchmove", (e) => {
-  if (isGameScreenActive()) e.preventDefault();
+  if (document.body.classList.contains("game-lock")) e.preventDefault();
 }, { passive:false });
 
 document.addEventListener("wheel", (e) => {
-  if (isGameScreenActive()) e.preventDefault();
+  if (document.body.classList.contains("game-lock")) e.preventDefault();
 }, { passive:false });
 
-// blokuj „dvojtap zoom“ + další gesta během hry
 document.addEventListener("gesturestart", (e) => {
-  if (isGameScreenActive()) e.preventDefault();
+  if (document.body.classList.contains("game-lock")) e.preventDefault();
 }, { passive:false });
+
 
     // ✅ NOVÉ: UI pro barvy
     const colorListEl = $("colorList");
@@ -537,6 +541,7 @@ document.addEventListener("gesturestart", (e) => {
     function showFullscreen(colorCss, label, extra) {
        tapLocked = false;
   keepAwakeStart();   // ← PŘIDAT
+  document.body.classList.add("game-lock"); 
   hideUI();
   idle.style.display = "none";
   fs.style.display = "flex";
@@ -549,6 +554,7 @@ document.addEventListener("gesturestart", (e) => {
     }
     function showIdle() {
   keepAwakeStart();   // ← PŘIDAT
+  document.body.classList.add("game-lock"); 
   hideUI();
   hideFullscreen();
   idle.style.display = "block";
@@ -819,6 +825,7 @@ window.addEventListener("pagehide", () => {
       applyColorConfigFromState(st);
 
       if (isHost) {
+          document.body.classList.remove("game-lock"); 
   showUI();
   hideFullscreen();
   hideIdle();
@@ -837,6 +844,7 @@ window.addEventListener("pagehide", () => {
 }
 
       if (st.phase === "lobby") {
+          document.body.classList.remove("game-lock"); 
         showUI();
         statusLine.textContent = "Lobby – čekám na start od hosta…";
         hideFullscreen(); hideIdle();
@@ -873,6 +881,7 @@ return;
       }
 
       if (st.phase === "stopped") {
+          document.body.classList.remove("game-lock"); 
         showUI();
         statusLine.textContent = "Stop.";
         hideFullscreen(); hideIdle();
