@@ -28,7 +28,7 @@
     .fullScreen {
       position: fixed; inset: 0; display: none;
       align-items: center; justify-content: center; flex-direction: column;
-      touch-action: manipulation;
+      touch-action: none;
     }
     .fsText { font-size: 34px; font-weight: 900; text-shadow: 0 2px 14px rgba(0,0,0,.35); }
     .fsSub { margin-top: 10px; font-size: 14px; opacity:.9; }
@@ -39,6 +39,7 @@
       position: fixed; inset: 0;
       display: none;
       background: #000;
+      touch-action: none;
     }
 
     /* ✅ NOVÉ: editor barev */
@@ -78,6 +79,12 @@
       flex: 0 0 auto;
     }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    html, body{
+  overscroll-behavior: none;
+  overflow: hidden;
+  height: 100%;
+}
+
   </style>
 </head>
 <body>
@@ -331,6 +338,23 @@ document.addEventListener("visibilitychange", ()=>{
     const fsText = $("fsText");
     const fsSub = $("fsSub");
     const idle = $("idle");
+function isGameScreenActive(){
+  return (fs.style.display !== "none" && fs.style.display !== "") || (idle.style.display === "block");
+}
+
+// blokuj posouvání a pull-to-refresh během hry
+document.addEventListener("touchmove", (e) => {
+  if (isGameScreenActive()) e.preventDefault();
+}, { passive:false });
+
+document.addEventListener("wheel", (e) => {
+  if (isGameScreenActive()) e.preventDefault();
+}, { passive:false });
+
+// blokuj „dvojtap zoom“ + další gesta během hry
+document.addEventListener("gesturestart", (e) => {
+  if (isGameScreenActive()) e.preventDefault();
+}, { passive:false });
 
     // ✅ NOVÉ: UI pro barvy
     const colorListEl = $("colorList");
