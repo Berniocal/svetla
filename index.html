@@ -991,56 +991,8 @@ async function hostPruneGhosts(){
 
       return { dc, shownAtMap };
     }
-// ✅ B-MODE: spočítá stav po tapu konkrétního telefonu (bez „děr“)
-//    GARANCE: žádná barva se neztratí. Když není idle, udělá se swap.
-function buildNextForTap(currentDc, currentShownAtMap, tappedId){
-  const dc = { ...(currentDc || {}) };
-  const shownAtMap = { ...(currentShownAtMap || {}) };
 
-  const colorKey = dc[tappedId];
-  if (!colorKey) return { dc, shownAtMap }; // tap na idle => nic
 
-  // barvu z tappedId sundej (pro případ, že ji přesuneme jinam)
-  dc[tappedId] = null;
-  delete shownAtMap[tappedId];
-
-  // 1) preferuj idle telefony (krom tappedId)
-  const idle = Object.keys(dc).filter(id => !dc[id] && id !== tappedId);
-
-  if (idle.length) {
-    const target = idle[randInt(0, idle.length - 1)];
-    dc[target] = colorKey;
-    shownAtMap[target] = now();
-    return { dc, shownAtMap };
-  }
-
-  // 2) když není idle => swap s někým jiným (aby se žádná barva neztratila)
-  const others = Object.keys(dc).filter(id => id !== tappedId);
-  if (!others.length) return { dc, shownAtMap };
-
-  const target = others[randInt(0, others.length - 1)];
-  const targetColor = dc[target];
-
-  // swap
-  dc[target] = colorKey;
-  shownAtMap[target] = now();
-
-  dc[tappedId] = targetColor;
-  shownAtMap[tappedId] = now();
-
-  return { dc, shownAtMap };
-}
-
-// ✅ z aktuálního stavu připrav "nextByDevice" pro všechny telefony s barvou
-function buildNextByDevice(dc, shownAtMap){
-  const out = {};
-  for (const id of Object.keys(dc || {})){
-    if (dc[id]) {
-      out[id] = buildNextForTap(dc, shownAtMap, id);
-    }
-  }
-  return out;
-}
 
     function getColoredDevices(dc){
       return Object.keys(dc || {}).filter(d=>!!dc[d]);
@@ -1048,6 +1000,13 @@ function buildNextByDevice(dc, shownAtMap){
     function getIdleDevices(dc){
       return Object.keys(dc || {}).filter(d=>!dc[d]);
     }
+function getIdleDeviceIds(dc){
+  return Object.keys(dc || {}).filter(id => !dc[id]); // null/undefined = idle
+}
+
+function pickRandom(arr){
+  return arr[Math.floor(Math.random() * arr.length)];
+}
 
 
 async function hostHandleEventForDevice(deviceIdThatTriggered, reason) {
@@ -1061,49 +1020,89 @@ async function hostHandleEventForDevice(deviceIdThatTriggered, reason) {
     return;
   }
 
-  // když kliknul telefon, který právě NEMÁ barvu, ignoruj (chrání víc prstů / double)
-  const currentDC = st.deviceColors || {};
-  const currentShown = st.shownAtMap || {};
-  const colorKey = currentDC[deviceIdThatTriggered] || null;
-  if (!colorKey) return;
+  const gameDevices = await getConnectedGameDevices();
+  const nPlayers = clamp(parseInt(st.playersCount || 4, 10), 2, 10);
 
-  // 1) spočítej nový stav tak, aby barva NIKDY nešla hned zpět na stejný telefon
-  //    => target vybíráme jen z "id !== tappedId"
-  const pre = (st.nextByDevice && st.nextByDevice[deviceIdThatTriggered])
-    ? st.nextByDevice[deviceIdThatTriggered]
-    : buildNextForTap(currentDC, currentShown, deviceIdThatTriggered);
+  // Musí být VÍCE telefonů než hráčů (aspoň 1 idle)
+  if (gameDevices.length <= nPlayers) {
+    hostRunning = false;
+    await stateRef.update({ phase:"stopped", hostRunning:false });
+    return;
+  }
 
-  // 2) okamžitě nastav nový stav (vizuálně bez mezer)
-  await stateRef.update({
-    deviceColors: pre.dc,
-    shownAtMap: pre.shownAtMap,
-    round: (st.round || 0) + 1
-  });
+  let dc = st.deviceColors || {};
+  let shownAtMap = st.shownAtMap || {};
 
-  // 3) body/miss dopočti podle PŮVODNÍHO current stavu
+  // zajisti, že dc obsahuje jen aktuálně připojené herní telefony
+  for (const id of gameDevices) if (!(id in dc)) dc[id] = null;
+  for (const id of Object.keys(dc)) {
+    if (!gameDevices.includes(id)) {
+      delete dc[id];
+      delete shownAtMap[id];
+    }
+  }
+
+  const currentColorKey = dc[deviceIdThatTriggered] || null;
+  if (!currentColorKey) return; // klik/timeout přišel z idle telefonu
+
+  // body / miss
   if (reason === "tap") {
-    const tShown = currentShown[deviceIdThatTriggered] || now();
+    const tShown = shownAtMap[deviceIdThatTriggered] || st.gameStartedAt || now();
     const reaction = Math.max(0, now() - tShown);
 
-    await playersRef.child(colorKey).transaction(p => {
+    await playersRef.child(currentColorKey).transaction(p => {
       if (!p) return p;
       p.hits = (p.hits || 0) + 1;
       p.totalMs = (p.totalMs || 0) + reaction;
       return p;
     });
   } else if (reason === "timeout") {
-    await playersRef.child(colorKey).transaction(p => {
+    await playersRef.child(currentColorKey).transaction(p => {
       if (!p) return p;
       p.miss = (p.miss || 0) + 1;
       return p;
     });
   }
 
-  // 4) připrav další NEXT mapu (z NOVÉHO current stavu)
+  // ✅ KLÍČ: přesun pouze na idle telefon
+  const idleIds = Object.keys(dc).filter(id => !dc[id]); // null/undefined
+  if (idleIds.length === 0) {
+    // nemáme kam přesunout (nemělo by nastat, když gameDevices > nPlayers)
+    return;
+  }
+
+  const targetIdle = idleIds[Math.floor(Math.random() * idleIds.length)];
+
+  // sundej barvu z původního telefonu
+  dc[deviceIdThatTriggered] = null;
+  delete shownAtMap[deviceIdThatTriggered];
+
+  // dej barvu na idle telefon
+  dc[targetIdle] = currentColorKey;
+  shownAtMap[targetIdle] = now();
+
+  // pojistka: každá aktivní barva max jednou (jen pro klíče c1..cN)
+  const activeKeys = getActiveColorKeys(nPlayers);
+  const count = {};
+  for (const k of activeKeys) count[k] = 0;
+  for (const id of Object.keys(dc)) {
+    const k = dc[id];
+    if (k && (k in count)) count[k]++;
+  }
+  const bad = activeKeys.some(k => count[k] !== 1);
+  if (bad) {
+    const rebuilt = buildInitialDeviceColors(gameDevices, nPlayers);
+    dc = rebuilt.dc;
+    shownAtMap = rebuilt.shownAtMap;
+  }
+
   await stateRef.update({
-    nextByDevice: buildNextByDevice(pre.dc, pre.shownAtMap)
+    deviceColors: dc,
+    shownAtMap: shownAtMap,
+    round: (st.round || 0) + 1
   });
 }
+
 
 
 
@@ -1209,9 +1208,15 @@ fs.addEventListener("pointerdown", async (e) => {
       const nPlayers = clamp(parseInt(playersCount.value,10)||4,2,10);
       const gameDevices = await getConnectedGameDevices();
 
-      if (gameDevices.length < nPlayers) {
-        alert(`Nelze spustit hru.\nHráčů: ${nPlayers}\nHerních telefonů: ${gameDevices.length}\n(Počítáno bez hosta)`);
-        return;
+    if (gameDevices.length <= nPlayers) {
+
+       alert(`Nelze spustit hru.
+Hráčů (barev): ${nPlayers}
+Herních telefonů: ${gameDevices.length}
+Musí platit: herních telefonů > hráčů (aspoň 1 telefon musí být vždy ztmavený).
+(Počítáno bez hosta)`);
+return;
+
       }
 
       hostRunning = true;
