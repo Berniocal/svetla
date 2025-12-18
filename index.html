@@ -602,6 +602,39 @@ document.addEventListener("visibilitychange", ()=>{
       await myDeviceRef.set({ name: myName, joinedAt: now(), lastSeen: now() });
       myDeviceRef.onDisconnect().remove();
       setInterval(()=> myDeviceRef.update({ lastSeen: now() }).catch(()=>{}), 5000);
+// ✅ OKAMŽITÉ odhlášení při zamknutí / odchodu / skrytí stránky
+let presenceTicker = null;
+
+function startPresenceTicker(){
+  if (presenceTicker) return;
+  presenceTicker = setInterval(() => {
+    if (myDeviceRef) myDeviceRef.update({ lastSeen: now() }).catch(()=>{});
+  }, 2000); // rychlejší heartbeat (2 s)
+}
+
+async function hardLeaveNow(reason){
+  try { keepAwakeStop(); } catch {}
+  try {
+    // odstraní mě z devices (jen pokud ještě máme připojení)
+    if (myDeviceRef) await myDeviceRef.remove();
+  } catch {}
+  // UI si můžeš nechat jak chceš; já doporučuju návrat do lobby:
+  try { await leaveRoom(reason || "Telefon odešel"); } catch {}
+}
+
+startPresenceTicker();
+
+// když uživatel appku schová / zamkne telefon
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    hardLeaveNow("Telefon odešel (zamknutí / přepnutí aplikace)");
+  }
+});
+
+// iOS/Safari často spolehlivěji volá pagehide než beforeunload
+window.addEventListener("pagehide", () => {
+  hardLeaveNow("Telefon odešel");
+});
 
       // determine host
       const snap = await stateRef.child("hostId").get();
@@ -843,6 +876,40 @@ function stopHostCountdown(){
 }
     
     // ====== HOST HELPERS ======
+// ✅ HOST: vyhoď telefony, které se nehlásí (ghosts)
+async function hostPruneGhosts(){
+  const snap = await devicesRef.get();
+  const devs = snap.val() || {};
+  const cutoff = now() - 6000; // 6 s bez heartbeat = pryč
+
+  const toRemove = [];
+  for (const [id, info] of Object.entries(devs)){
+    const ls = info?.lastSeen || 0;
+    if (ls < cutoff) toRemove.push(id);
+  }
+
+  if (!toRemove.length) return;
+
+  // smaž je z devices
+  const upd = {};
+  for (const id of toRemove) upd[id] = null;
+  await devicesRef.update(upd);
+
+  // a oprav deviceColors (když byli ve hře)
+  const st = (await stateRef.get()).val() || {};
+  let dc = st.deviceColors || {};
+  let shownAtMap = st.shownAtMap || {};
+  let changed = false;
+
+  for (const id of toRemove){
+    if (id in dc) { delete dc[id]; changed = true; }
+    if (id in shownAtMap) { delete shownAtMap[id]; changed = true; }
+  }
+
+  if (changed){
+    await stateRef.update({ deviceColors: dc, shownAtMap: shownAtMap });
+  }
+}
 
     async function getHostId(){
       return (await stateRef.child("hostId").get()).val();
@@ -989,7 +1056,7 @@ function stopHostCountdown(){
 
     async function hostTick() {
       if (!isHost || !hostRunning) return;
-
+      await hostPruneGhosts();
       const st = (await stateRef.get()).val() || {};
       if (st.phase !== "running") return;
 
