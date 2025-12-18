@@ -470,6 +470,7 @@ document.addEventListener("visibilitychange", ()=>{
 
     // Host runtime
     let hostRunning = false;
+    let tapLocked = false;
     let stopTimer = null;
     let countdownTimer = null;
 
@@ -510,6 +511,7 @@ document.addEventListener("visibilitychange", ()=>{
     function showUI(){ appWrap.style.display = ""; }
 
     function showFullscreen(colorCss, label, extra) {
+       tapLocked = false;
   keepAwakeStart();   // ← PŘIDAT
   hideUI();
   idle.style.display = "none";
@@ -1027,12 +1029,24 @@ function stopHostCountdown(){
       await hostHandleEventForDevice(act.deviceId, "tap");
     }
 
-    fs.addEventListener("pointerdown", async (e) => {
-  keepAwakeStart();   // ← iOS vyžaduje gesture
+fs.addEventListener("pointerdown", async (e) => {
+  if (tapLocked) return;      // 🚫 DALŠÍ DOTYKY IGNORUJ
+  tapLocked = true;           // 🔒 ZAMKNI TAP
+
+  keepAwakeStart();
   if (!roomCode) return;
   e.preventDefault();
+
+  // ⚡ OKAMŽITĚ SCHOVEJ BARVU
+  hideFullscreen();
+  showIdle();
+
   try {
-    await actionsRef.push({ type:"tap", deviceId, at: now() });
+    await actionsRef.push({
+      type: "tap",
+      deviceId,
+      at: now()
+    });
   } catch {}
 });
 
