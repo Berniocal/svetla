@@ -471,6 +471,7 @@ document.addEventListener("visibilitychange", ()=>{
     // Host runtime
     let hostRunning = false;
     let tapLocked = false;
+    let lastAssignedColorKey = null;
     let stopTimer = null;
     let countdownTimer = null;
 
@@ -823,17 +824,29 @@ window.addEventListener("pagehide", () => {
         const dc = st.deviceColors || {};
         const myColorKey = dc[deviceId] || null;
 
-        if (myColorKey) {
-          const c = configByKey(myColorKey);
+if (myColorKey) {
+  // ✅ když mi (znovu) přiřadí barvu, odemkni tap pro toto zobrazení
+  if (myColorKey !== lastAssignedColorKey) {
+    tapLocked = false;
+    lastAssignedColorKey = myColorKey;
+  } else {
+    // i kdyby se omylem přiřadila stejná barva znovu, dovol další kolo
+    tapLocked = false;
+  }
 
-          const niceName = (c.label && c.label.trim()) ? c.label.trim() : "Tvoje barva";
-          const niceEmoji = (c.emoji && c.emoji.trim()) ? (c.emoji.trim() + " ") : "";
+  const c = configByKey(myColorKey);
+  const niceName = (c.label && c.label.trim()) ? c.label.trim() : "Tvoje barva";
+  const niceEmoji = (c.emoji && c.emoji.trim()) ? (c.emoji.trim() + " ") : "";
 
-          showFullscreen(c.css || "#222", (niceEmoji + niceName).trim(), "Klepni kamkoliv");
-        } else {
-          showIdle();
-        }
-        return;
+  showFullscreen(c.css || "#222", (niceEmoji + niceName).trim(), "Klepni kamkoliv");
+} else {
+  // když jsem idle, taky je bezpečné odemknout
+  tapLocked = false;
+  lastAssignedColorKey = null;
+  showIdle();
+}
+return;
+
       }
 
       if (st.phase === "stopped") {
@@ -1097,25 +1110,28 @@ async function hostPruneGhosts(){
     }
 
 fs.addEventListener("pointerdown", async (e) => {
-  if (tapLocked) return;      // 🚫 DALŠÍ DOTYKY IGNORUJ
-  tapLocked = true;           // 🔒 ZAMKNI TAP
+  // jen primární dotyk (více prstů => jen jeden se počítá)
+  if (e.isPrimary === false) return;
+
+  if (!roomCode) return;
+
+  if (tapLocked) return;      // 🚫 další dotyky ignoruj
+  tapLocked = true;           // 🔒 zamkni tap hned
 
   keepAwakeStart();
-  if (!roomCode) return;
   e.preventDefault();
 
-  // ⚡ OKAMŽITĚ SCHOVEJ BARVU
+  // ⚡ okamžitě schovej barvu (lokálně)
   hideFullscreen();
   showIdle();
 
   try {
-    await actionsRef.push({
-      type: "tap",
-      deviceId,
-      at: now()
-    });
+    await actionsRef.push({ type:"tap", deviceId, at: now() });
   } catch {}
+
+  // ❗ NEODEMYKEJ tady – odemkne se až když dostaneš novou barvu
 });
+
 
     // Buttons
     btnRandom.onclick = () => { codeInput.value = genCode(); };
