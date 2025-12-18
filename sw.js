@@ -1,4 +1,4 @@
-const CACHE = "barvy-cache-v14";
+const CACHE = "barvy-cache-v15";
 const ASSETS = ["./", "./index.html", "./manifest.json"];
 
 self.addEventListener("install", (e) => {
