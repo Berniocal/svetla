@@ -995,6 +995,48 @@ async function hostPruneGhosts(){
 
       return { dc, shownAtMap };
     }
+// ✅ B-MODE: spočítá stav po tapu konkrétního telefonu (bez „děr“)
+function buildNextForTap(currentDc, currentShownAtMap, tappedId){
+  const dc = { ...(currentDc || {}) };
+  const shownAtMap = { ...(currentShownAtMap || {}) };
+
+  const colorKey = dc[tappedId];
+  if (!colorKey) return { dc, shownAtMap }; // tap na idle => nic
+
+  // 1) tapnutý telefon zhasni
+  dc[tappedId] = null;
+  delete shownAtMap[tappedId];
+
+  // 2) najdi idle telefony (preferuj je)
+  const idle = Object.keys(dc).filter(id => !dc[id] && id !== tappedId);
+
+  // 3) vyber cíl: primárně idle, jinak náhodně někdo jiný než tappedId
+  let target = null;
+  if (idle.length){
+    target = idle[randInt(0, idle.length - 1)];
+  } else {
+    const others = Object.keys(dc).filter(id => id !== tappedId);
+    if (!others.length) return { dc, shownAtMap };
+    target = others[randInt(0, others.length - 1)];
+  }
+
+  // 4) přesuň barvu
+  dc[target] = colorKey;
+  shownAtMap[target] = now();
+
+  return { dc, shownAtMap };
+}
+
+// ✅ z aktuálního stavu připrav "nextByDevice" pro všechny telefony s barvou
+function buildNextByDevice(dc, shownAtMap){
+  const out = {};
+  for (const id of Object.keys(dc || {})){
+    if (dc[id]) {
+      out[id] = buildNextForTap(dc, shownAtMap, id);
+    }
+  }
+  return out;
+}
 
     function getColoredDevices(dc){
       return Object.keys(dc || {}).filter(d=>!!dc[d]);
@@ -1063,6 +1105,23 @@ async function hostHandleEventForDevice(deviceIdThatTriggered, reason) {
       return p;
     });
   }
+// ====== B-MODE: okamžitý posun bez mezer (NEXT podle toho, kdo klikl) ======
+const pre = (st.nextByDevice && st.nextByDevice[deviceIdThatTriggered])
+  ? st.nextByDevice[deviceIdThatTriggered]
+  : buildNextForTap(st.deviceColors || {}, st.shownAtMap || {}, deviceIdThatTriggered);
+
+// 1) okamžitě nastav nový stav (barva hned “přeskočí”)
+await stateRef.update({
+  deviceColors: pre.dc,
+  shownAtMap: pre.shownAtMap,
+  round: (st.round || 0) + 1
+});
+
+// 2) připrav nové NEXT pro další kliky z nového CURRENT stavu
+const nextBy2 = buildNextByDevice(pre.dc, pre.shownAtMap);
+await stateRef.update({ nextByDevice: nextBy2 });
+
+return; // ✅ důležité: tím vypneš starou swap/idle logiku pod tím
 
   // 3) Dopočítej NOVÉ NEXT pro další klik
   const gameDevices = await getConnectedGameDevices();
@@ -1212,19 +1271,18 @@ fs.addEventListener("pointerdown", async (e) => {
 const next = buildInitialDeviceColors(gameDevices, nPlayers);
 
 await stateRef.update({
-  phase: "running",
-  hostRunning: true,
-  round: 0,
+  phase:"running",
+  hostRunning:true,
+  round:0,
   gameStartedAt: startedAt,
   gameEndsAt: endsAt,
-
-  deviceColors: current.dc,
-  shownAtMap: current.shownAtMap,
-
-  // 🔥 NOVÉ
-  nextDeviceColors: next.dc,
-  nextShownAtMap: next.shownAtMap
+  deviceColors: init.dc,
+  shownAtMap: init.shownAtMap
 });
+
+// ✅ připrav NEXT pro každý telefon zvlášť (po STARTu)
+const nextBy = buildNextByDevice(init.dc, init.shownAtMap);
+await stateRef.update({ nextByDevice: nextBy });
 
 
       clearTimeout(stopTimer);
