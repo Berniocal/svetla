@@ -811,6 +811,9 @@ window.addEventListener("pagehide", () => {
 
         deviceColors: null,
         shownAtMap: null,
+  nextDeviceColors: null,
+  nextShownAtMap: null,
+        
 
         // ✅ NOVÉ:
         colorConfig: cfg
@@ -1000,104 +1003,91 @@ async function hostPruneGhosts(){
       return Object.keys(dc || {}).filter(d=>!dc[d]);
     }
 
-    async function hostHandleEventForDevice(deviceIdThatTriggered, reason) {
-      const st = (await stateRef.get()).val() || {};
-      if (st.phase !== "running") return;
+async function hostHandleEventForDevice(deviceIdThatTriggered, reason) {
+  const st = (await stateRef.get()).val() || {};
+  if (st.phase !== "running") return;
 
-      if (st.gameEndsAt && now() >= st.gameEndsAt) {
-        hostRunning = false;
-        await stateRef.update({ phase:"stopped", hostRunning:false });
-        return;
-      }
+  // konec hry
+  if (st.gameEndsAt && now() >= st.gameEndsAt) {
+    hostRunning = false;
+    await stateRef.update({ phase:"stopped", hostRunning:false });
+    return;
+  }
 
-      const gameDevices = await getConnectedGameDevices();
-      const nPlayers = clamp(parseInt(st.playersCount||4,10),2,10);
-      if (gameDevices.length < nPlayers) {
-        hostRunning = false;
-        await stateRef.update({ phase:"stopped", hostRunning:false });
-        return;
-      }
+  // musí existovat CURRENT i NEXT mapy
+  const currentDC = st.deviceColors || {};
+  const currentShown = st.shownAtMap || {};
+  const nextDC = st.nextDeviceColors || null;
+  const nextShown = st.nextShownAtMap || null;
 
-      let dc = st.deviceColors || {};
-      let shownAtMap = st.shownAtMap || {};
-
-      for (const id of gameDevices) if (!(id in dc)) dc[id] = null;
-      for (const id of Object.keys(dc)) {
-        if (!gameDevices.includes(id)) {
-          delete dc[id];
-          delete shownAtMap[id];
-        }
-      }
-
-      const currentColorKey = dc[deviceIdThatTriggered] || null;
-      if (!currentColorKey) return;
-
-      const dur = clamp(parseInt(st.durationMs||1800,10),200,20000);
-
-      if (reason === "tap") {
-        const tShown = shownAtMap[deviceIdThatTriggered] || st.gameStartedAt || now();
-        const reaction = Math.max(0, now() - tShown);
-
-        await playersRef.child(currentColorKey).transaction(p => {
-          if (!p) return p;
-          p.hits = (p.hits||0) + 1;
-          p.totalMs = (p.totalMs||0) + reaction;
-          return p;
-        });
-      } else if (reason === "timeout") {
-        await playersRef.child(currentColorKey).transaction(p => {
-          if (!p) return p;
-          p.miss = (p.miss||0) + 1;
-          return p;
-        });
-      }
-
-      const idle = getIdleDevices(dc);
-      const colored = getColoredDevices(dc);
-      const hasIdle = idle.length > 0;
-
-      if (hasIdle) {
-        const targetIdle = idle[randInt(0, idle.length-1)];
-        dc[deviceIdThatTriggered] = null;
-        delete shownAtMap[deviceIdThatTriggered];
-        dc[targetIdle] = currentColorKey;
-        shownAtMap[targetIdle] = now();
-      } else {
-        const others = colored.filter(d => d !== deviceIdThatTriggered);
-        if (others.length === 0) return;
-        const swapWith = others[randInt(0, others.length-1)];
-        const otherColorKey = dc[swapWith];
-
-        dc[deviceIdThatTriggered] = otherColorKey;
-        dc[swapWith] = currentColorKey;
-
-        shownAtMap[deviceIdThatTriggered] = now();
-        shownAtMap[swapWith] = now();
-      }
-
-      // pojistka invariantu: každá z prvních N barev právě jednou
-      const activeKeys = getActiveColorKeys(nPlayers);
-      const count = {};
-      for (const k of activeKeys) count[k]=0;
-      for (const d of Object.keys(dc)) {
-        const c = dc[d];
-        if (c && (c in count)) count[c]++;
-      }
-      const bad = activeKeys.some(k => count[k] !== 1);
-      if (bad) {
-        const rebuilt = buildInitialDeviceColors(gameDevices, nPlayers);
-        dc = rebuilt.dc;
-        shownAtMap = rebuilt.shownAtMap;
-      }
-
-      const newRound = (st.round||0) + 1;
-
-      await stateRef.update({
-        deviceColors: dc,
-        shownAtMap: shownAtMap,
-        round: newRound
-      });
+  // bezpečnost: když NEXT chybí, rychle ho dopočti a skonči (aby se nic nerozbilo)
+  if (!nextDC || !nextShown) {
+    const gameDevicesTmp = await getConnectedGameDevices();
+    const nPlayersTmp = clamp(parseInt(st.playersCount || 4, 10), 2, 10);
+    if (gameDevicesTmp.length < nPlayersTmp) {
+      hostRunning = false;
+      await stateRef.update({ phase:"stopped", hostRunning:false });
+      return;
     }
+    const regen = buildInitialDeviceColors(gameDevicesTmp, nPlayersTmp);
+    await stateRef.update({ nextDeviceColors: regen.dc, nextShownAtMap: regen.shownAtMap });
+    return;
+  }
+
+  // 1) OKAMŽITĚ přepni CURRENT -> NEXT (vizuálně bez mezery)
+  await stateRef.update({
+    deviceColors: nextDC,
+    shownAtMap: nextShown,
+    round: (st.round || 0) + 1
+  });
+
+  // 2) Body/miss počítej podle toho, co bylo v CURRENT
+  const colorKey = currentDC[deviceIdThatTriggered] || null;
+  if (!colorKey) return; // klik bez barvy = ignoruj (chrání double klik i víc prstů)
+
+  if (reason === "tap") {
+    const tShown = currentShown[deviceIdThatTriggered] || now();
+    const reaction = Math.max(0, now() - tShown);
+
+    await playersRef.child(colorKey).transaction(p => {
+      if (!p) return p;
+      p.hits = (p.hits || 0) + 1;
+      p.totalMs = (p.totalMs || 0) + reaction;
+      return p;
+    });
+
+  } else if (reason === "timeout") {
+    await playersRef.child(colorKey).transaction(p => {
+      if (!p) return p;
+      p.miss = (p.miss || 0) + 1;
+      return p;
+    });
+  }
+
+  // 3) Dopočítej NOVÉ NEXT pro další klik
+  const gameDevices = await getConnectedGameDevices();
+  const nPlayers = clamp(parseInt(st.playersCount || 4, 10), 2, 10);
+
+  if (gameDevices.length < nPlayers) {
+    hostRunning = false;
+    await stateRef.update({ phase:"stopped", hostRunning:false });
+    return;
+  }
+
+  let next = buildInitialDeviceColors(gameDevices, nPlayers);
+
+  // volitelná pojistka: ať se barva nevrátí hned na stejný telefon
+  // (když by náhoda vygenerovala stejný stav, zkus to ještě jednou)
+  if (JSON.stringify(next.dc) === JSON.stringify(nextDC)) {
+    next = buildInitialDeviceColors(gameDevices, nPlayers);
+  }
+
+  await stateRef.update({
+    nextDeviceColors: next.dc,
+    nextShownAtMap: next.shownAtMap
+  });
+}
+
 
     async function hostTick() {
       if (!isHost || !hostRunning) return;
@@ -1218,17 +1208,24 @@ fs.addEventListener("pointerdown", async (e) => {
       const startedAt = now();
       const endsAt = startedAt + gls*1000;
 
-      const init = buildInitialDeviceColors(gameDevices, nPlayers);
+      const current = buildInitialDeviceColors(gameDevices, nPlayers);
+const next = buildInitialDeviceColors(gameDevices, nPlayers);
 
-      await stateRef.update({
-        phase:"running",
-        hostRunning:true,
-        round:0,
-        gameStartedAt: startedAt,
-        gameEndsAt: endsAt,
-        deviceColors: init.dc,
-        shownAtMap: init.shownAtMap
-      });
+await stateRef.update({
+  phase: "running",
+  hostRunning: true,
+  round: 0,
+  gameStartedAt: startedAt,
+  gameEndsAt: endsAt,
+
+  deviceColors: current.dc,
+  shownAtMap: current.shownAtMap,
+
+  // 🔥 NOVÉ
+  nextDeviceColors: next.dc,
+  nextShownAtMap: next.shownAtMap
+});
+
 
       clearTimeout(stopTimer);
       stopTimer = setTimeout(async ()=>{
