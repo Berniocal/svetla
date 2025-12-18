@@ -22,8 +22,8 @@ const CORE_ASSETS = [
   './manifest.json',
   './sw.js',
   // přidej sem své ikony, pokud existují:
-   './icon-192.png',
-  './icon-512.png',
+  './icons/icon-192.png',
+  './icons/icon-512.png',
   // přidej sem video, pokud ho chceš offline:
   // './video.mp4',
 ];
