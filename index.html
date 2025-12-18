@@ -992,6 +992,7 @@ async function hostPruneGhosts(){
       return { dc, shownAtMap };
     }
 // ✅ B-MODE: spočítá stav po tapu konkrétního telefonu (bez „děr“)
+//    GARANCE: žádná barva se neztratí. Když není idle, udělá se swap.
 function buildNextForTap(currentDc, currentShownAtMap, tappedId){
   const dc = { ...(currentDc || {}) };
   const shownAtMap = { ...(currentShownAtMap || {}) };
@@ -999,26 +1000,33 @@ function buildNextForTap(currentDc, currentShownAtMap, tappedId){
   const colorKey = dc[tappedId];
   if (!colorKey) return { dc, shownAtMap }; // tap na idle => nic
 
-  // 1) tapnutý telefon zhasni
+  // barvu z tappedId sundej (pro případ, že ji přesuneme jinam)
   dc[tappedId] = null;
   delete shownAtMap[tappedId];
 
-  // 2) najdi idle telefony (preferuj je)
+  // 1) preferuj idle telefony (krom tappedId)
   const idle = Object.keys(dc).filter(id => !dc[id] && id !== tappedId);
 
-  // 3) vyber cíl: primárně idle, jinak náhodně někdo jiný než tappedId
-  let target = null;
-  if (idle.length){
-    target = idle[randInt(0, idle.length - 1)];
-  } else {
-    const others = Object.keys(dc).filter(id => id !== tappedId);
-    if (!others.length) return { dc, shownAtMap };
-    target = others[randInt(0, others.length - 1)];
+  if (idle.length) {
+    const target = idle[randInt(0, idle.length - 1)];
+    dc[target] = colorKey;
+    shownAtMap[target] = now();
+    return { dc, shownAtMap };
   }
 
-  // 4) přesuň barvu
+  // 2) když není idle => swap s někým jiným (aby se žádná barva neztratila)
+  const others = Object.keys(dc).filter(id => id !== tappedId);
+  if (!others.length) return { dc, shownAtMap };
+
+  const target = others[randInt(0, others.length - 1)];
+  const targetColor = dc[target];
+
+  // swap
   dc[target] = colorKey;
   shownAtMap[target] = now();
+
+  dc[tappedId] = targetColor;
+  shownAtMap[tappedId] = now();
 
   return { dc, shownAtMap };
 }
@@ -1096,6 +1104,7 @@ async function hostHandleEventForDevice(deviceIdThatTriggered, reason) {
     nextByDevice: buildNextByDevice(pre.dc, pre.shownAtMap)
   });
 }
+
 
 
     async function hostTick() {
