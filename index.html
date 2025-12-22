@@ -42,6 +42,22 @@
       touch-action: none;
     }
 
+    /* ✅ WAITING SCREEN (hráč čeká na schválení hostem) */
+    .waitScreen{
+      position: fixed; inset: 0;
+      display:none;
+      align-items:center;
+      justify-content:center;
+      flex-direction:column;
+      background:#0b0e14;
+      color: var(--text);
+      text-align:center;
+      padding:24px;
+      z-index: 50;
+    }
+    .waitTitle{ font-size: 22px; font-weight: 800; }
+    .waitText{ margin-top:10px; color: var(--muted); line-height:1.4; }
+
     /* ✅ NOVÉ: editor barev */
     .colorList { display:flex; flex-direction:column; gap:10px; margin-top:10px; }
     .colorRow {
@@ -86,8 +102,6 @@ body.game-lock{
   overflow: hidden;
   touch-action: none;
 }
-
-
   </style>
 </head>
 <body>
@@ -168,6 +182,12 @@ body.game-lock{
 
       <div style="height:10px"></div>
       <div class="muted">Připojené telefony (včetně hosta): <span id="devicesCount">0</span></div>
+
+      <!-- ✅ NOVÉ: žádosti o připojení -->
+      <div style="height:14px"></div>
+      <div class="big" style="font-size:16px">Žádosti o připojení</div>
+      <div class="muted">Schval hráče, jinak čekají.</div>
+      <div id="reqList" class="colorList" style="margin-top:10px"></div>
     </div>
 
     <div class="card" id="statusCard" style="display:none">
@@ -226,6 +246,12 @@ body.game-lock{
   <!-- Fullscreen idle (ztmavení) -->
   <div class="idleScreen" id="idle"></div>
 
+  <!-- ✅ WAITING screen -->
+  <div class="waitScreen" id="wait">
+    <div class="waitTitle">Čekám na schválení…</div>
+    <div class="waitText" id="waitText">—</div>
+  </div>
+
   <!-- Firebase (compat for simple CDN usage) -->
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
@@ -243,13 +269,21 @@ body.game-lock{
     };
     // =======================================
 
- 
-
     // Helpers
     const $ = (id)=>document.getElementById(id);
     const now = ()=>Date.now();
     const clamp = (n,a,b)=>Math.max(a,Math.min(b,n));
     const randInt = (a,b)=>Math.floor(Math.random()*(b-a+1))+a;
+
+    function escapeHtml(s){
+      return String(s || "")
+        .replaceAll("&","&amp;")
+        .replaceAll("<","&lt;")
+        .replaceAll(">","&gt;")
+        .replaceAll('"',"&quot;")
+        .replaceAll("'","&#39;");
+    }
+
 // ================= KEEP AWAKE =================
 const keepAwakeVideo = document.getElementById("keepAwakeVideo");
 let wakeLock = null;
@@ -338,6 +372,14 @@ document.addEventListener("visibilitychange", ()=>{
     const fsText = $("fsText");
     const fsSub = $("fsSub");
     const idle = $("idle");
+
+    // ✅ WAIT refs
+    const wait = $("wait");
+    const waitText = $("waitText");
+
+    // ✅ join requests list (host)
+    const reqList = $("reqList");
+
 function isGameScreenActive(){
   return (fs.style.display !== "none" && fs.style.display !== "") || (idle.style.display === "block");
 }
@@ -485,6 +527,7 @@ document.addEventListener("gesturestart", (e) => {
     let devicesRef = null;
     let actionsRef = null;
     let playersRef = null;
+    let requestsRef = null; // ✅ NEW
 
     // ✅ hostAlive
     let hostAliveRef = null;
@@ -535,10 +578,23 @@ document.addEventListener("gesturestart", (e) => {
     function hideUI(){ appWrap.style.display = "none"; }
     function showUI(){ appWrap.style.display = ""; }
 
+    function showWaiting(hostName){
+      document.body.classList.remove("game-lock");
+      hideUI();
+      hideFullscreen();
+      hideIdle();
+      wait.style.display = "flex";
+      waitText.textContent = `Čekáš na hlavní telefon „${hostName || "Host"}“, až tě přijme do hry.`;
+    }
+    function hideWaiting(){
+      wait.style.display = "none";
+    }
+
     function showFullscreen(colorCss, label, extra) {
        tapLocked = false;
   keepAwakeStart();   // ← PŘIDAT
-  document.body.classList.add("game-lock"); 
+  document.body.classList.add("game-lock");
+  hideWaiting();
   hideUI();
   idle.style.display = "none";
   fs.style.display = "flex";
@@ -551,7 +607,8 @@ document.addEventListener("gesturestart", (e) => {
     }
     function showIdle() {
   keepAwakeStart();   // ← PŘIDAT
-  document.body.classList.add("game-lock"); 
+  document.body.classList.add("game-lock");
+  hideWaiting();
   hideUI();
   hideFullscreen();
   idle.style.display = "block";
@@ -566,7 +623,7 @@ document.addEventListener("gesturestart", (e) => {
       try { clearTimeout(stopTimer); } catch {}
       try { if (hostTickTimer) { clearInterval(hostTickTimer); hostTickTimer = null; } } catch {}
 
-      try { hideFullscreen(); hideIdle(); } catch {}
+      try { hideFullscreen(); hideIdle(); hideWaiting(); } catch {}
       try { showUI(); } catch {}
 
       try {
@@ -575,6 +632,7 @@ document.addEventListener("gesturestart", (e) => {
         if (stateRef) stateRef.off();
         if (actionsRef) actionsRef.off();
         if (hostAliveRef) hostAliveRef.off();
+        if (requestsRef) requestsRef.off();
       } catch {}
 
       try { if (myDeviceRef) await myDeviceRef.remove(); } catch {}
@@ -597,6 +655,7 @@ document.addEventListener("gesturestart", (e) => {
       devicesRef = null;
       actionsRef = null;
       playersRef = null;
+      requestsRef = null;
       hostAliveRef = null;
       myDeviceRef = null;
     }
@@ -617,6 +676,7 @@ document.addEventListener("gesturestart", (e) => {
       devicesRef = roomRef.child("devices");
       actionsRef = roomRef.child("actions");
       playersRef = roomRef.child("players");
+      requestsRef = roomRef.child("joinRequests"); // ✅ NEW
       hostAliveRef = roomRef.child("hostAlive");
 
       roomCodeLabel.textContent = roomCode;
@@ -626,42 +686,49 @@ document.addEventListener("gesturestart", (e) => {
       // presence
       const myName = (nameInput.value || "").trim() || "Telefon";
       myDeviceRef = devicesRef.child(deviceId);
-      await myDeviceRef.set({ name: myName, joinedAt: now(), lastSeen: now() });
+      await myDeviceRef.set({
+        name: myName,
+        joinedAt: now(),
+        lastSeen: now(),
+        approved: false,
+        denied: false
+      });
       myDeviceRef.onDisconnect().remove();
       setInterval(()=> myDeviceRef.update({ lastSeen: now() }).catch(()=>{}), 5000);
-// ✅ OKAMŽITÉ odhlášení při zamknutí / odchodu / skrytí stránky
-let presenceTicker = null;
 
-function startPresenceTicker(){
-  if (presenceTicker) return;
-  presenceTicker = setInterval(() => {
-    if (myDeviceRef) myDeviceRef.update({ lastSeen: now() }).catch(()=>{});
-  }, 2000); // rychlejší heartbeat (2 s)
-}
+      // ✅ OKAMŽITÉ odhlášení při zamknutí / odchodu / skrytí stránky
+      let presenceTicker = null;
 
-async function hardLeaveNow(reason){
-  try { keepAwakeStop(); } catch {}
-  try {
-    // odstraní mě z devices (jen pokud ještě máme připojení)
-    if (myDeviceRef) await myDeviceRef.remove();
-  } catch {}
-  // UI si můžeš nechat jak chceš; já doporučuju návrat do lobby:
-  try { await leaveRoom(reason || "Telefon odešel"); } catch {}
-}
+      function startPresenceTicker(){
+        if (presenceTicker) return;
+        presenceTicker = setInterval(() => {
+          if (myDeviceRef) myDeviceRef.update({ lastSeen: now() }).catch(()=>{});
+        }, 2000); // rychlejší heartbeat (2 s)
+      }
 
-startPresenceTicker();
+      async function hardLeaveNow(reason){
+        try { keepAwakeStop(); } catch {}
+        try {
+          // odstraní mě z devices (jen pokud ještě máme připojení)
+          if (myDeviceRef) await myDeviceRef.remove();
+        } catch {}
+        // UI si můžeš nechat jak chceš; já doporučuju návrat do lobby:
+        try { await leaveRoom(reason || "Telefon odešel"); } catch {}
+      }
 
-// když uživatel appku schová / zamkne telefon
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "hidden") {
-    hardLeaveNow("Telefon odešel (zamknutí / přepnutí aplikace)");
-  }
-});
+      startPresenceTicker();
 
-// iOS/Safari často spolehlivěji volá pagehide než beforeunload
-window.addEventListener("pagehide", () => {
-  hardLeaveNow("Telefon odešel");
-});
+      // když uživatel appku schová / zamkne telefon
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "hidden") {
+          hardLeaveNow("Telefon odešel (zamknutí / přepnutí aplikace)");
+        }
+      });
+
+      // iOS/Safari často spolehlivěji volá pagehide než beforeunload
+      window.addEventListener("pagehide", () => {
+        hardLeaveNow("Telefon odešel");
+      });
 
       // determine host
       const snap = await stateRef.child("hostId").get();
@@ -674,6 +741,20 @@ window.addEventListener("pagehide", () => {
         isHost = (snap.val() === deviceId);
       }
 
+      // ✅ Host auto-approved, hráč = join request
+      if (isHost) {
+        try { await myDeviceRef.update({ approved: true, denied: false }); } catch {}
+      } else {
+        try {
+          await requestsRef.child(deviceId).set({
+            deviceId,
+            name: myName,
+            at: now()
+          });
+          requestsRef.child(deviceId).onDisconnect().remove();
+        } catch {}
+      }
+
       // host alive / cleanup
       if (isHost) {
         try {
@@ -683,6 +764,7 @@ window.addEventListener("pagehide", () => {
           stateRef.onDisconnect().remove();
           actionsRef.onDisconnect().remove();
           playersRef.onDisconnect().remove();
+          requestsRef.onDisconnect().remove();
         } catch {}
       }
 
@@ -699,12 +781,85 @@ window.addEventListener("pagehide", () => {
         });
       }
 
+      // ✅ Hráč čeká na schválení / nebo je odmítnut
+      myDeviceRef.on("value", async (s) => {
+        const me = s.val() || {};
+        if (isHost) return;
+
+        if (me.denied) {
+          await leaveRoom("Host tě nepřijal do hry");
+          return;
+        }
+
+        if (!me.approved) {
+          // zjisti jméno hosta (pro text)
+          let hostName = "Host";
+          try {
+            const hid = await getHostId();
+            const hs = await devicesRef.child(hid).get();
+            hostName = (hs.val() && hs.val().name) ? hs.val().name : "Host";
+          } catch {}
+          showWaiting(hostName);
+        } else {
+          hideWaiting();
+          showUI();
+        }
+      });
+
       // init defaults if host and missing
       if (isHost) {
         const st = await stateRef.get();
         if (!st.exists() || !st.val()?.phase) await initRoomDefaults();
         // ✅ editor barev vykresli až teď (host)
         renderColorEditor();
+      }
+
+      // ✅ Host: zobraz žádosti o připojení + přijmout/odmítnout
+      if (isHost) {
+        requestsRef.on("value", (snapReq) => {
+          const reqs = snapReq.val() || {};
+          reqList.innerHTML = "";
+
+          const ids = Object.keys(reqs);
+          if (!ids.length) {
+            reqList.innerHTML = `<div class="muted">Nikdo teď nečeká.</div>`;
+            return;
+          }
+
+          ids.forEach((id) => {
+            const r = reqs[id] || {};
+            const row = document.createElement("div");
+            row.className = "colorRow";
+            row.style.gridTemplateColumns = "1fr 110px 110px";
+
+            const left = document.createElement("div");
+            left.innerHTML = `<div class="big" style="font-size:16px">Chce se připojit: ${escapeHtml(r.name || "Telefon")}</div>
+                              <div class="muted mono">${escapeHtml(id)}</div>`;
+
+            const btnYes = document.createElement("button");
+            btnYes.textContent = "Přijmout";
+
+            const btnNo = document.createElement("button");
+            btnNo.textContent = "Odmítnout";
+            btnNo.className = "danger";
+
+            btnYes.onclick = async () => {
+              try { await devicesRef.child(id).update({ approved:true, denied:false }); } catch {}
+              try { await requestsRef.child(id).remove(); } catch {}
+            };
+
+            btnNo.onclick = async () => {
+              try { await devicesRef.child(id).update({ approved:false, denied:true }); } catch {}
+              try { await requestsRef.child(id).remove(); } catch {}
+              try { await devicesRef.child(id).remove(); } catch {}
+            };
+
+            row.appendChild(left);
+            row.appendChild(btnYes);
+            row.appendChild(btnNo);
+            reqList.appendChild(row);
+          });
+        });
       }
 
       // devices count
@@ -726,18 +881,18 @@ window.addEventListener("pagehide", () => {
 
       // host cleanup best-effort
       if (isHost) {
-  const hostCleanup = async () => {
-    try {
-      console.log("🔥 Host odešel – mažu celou místnost");
-      await roomRef.remove(); // 💥 TOTO JE KLÍČ
-    } catch (e) {
-      console.warn("Cleanup failed", e);
-    }
-  };
+        const hostCleanup = async () => {
+          try {
+            console.log("🔥 Host odešel – mažu celou místnost");
+            await roomRef.remove(); // 💥 TOTO JE KLÍČ
+          } catch (e) {
+            console.warn("Cleanup failed", e);
+          }
+        };
 
-  window.addEventListener("pagehide", hostCleanup);
-  window.addEventListener("beforeunload", hostCleanup);
-}
+        window.addEventListener("pagehide", hostCleanup);
+        window.addEventListener("beforeunload", hostCleanup);
+      }
     }
 
     // ✅ NOVÉ: vezmi colorConfig ze state, nebo nech default
@@ -809,8 +964,6 @@ window.addEventListener("pagehide", () => {
         deviceColors: null,
         shownAtMap: null,
 
-        
-
         // ✅ NOVÉ:
         colorConfig: cfg
       });
@@ -824,26 +977,27 @@ window.addEventListener("pagehide", () => {
       applyColorConfigFromState(st);
 
       if (isHost) {
-          document.body.classList.remove("game-lock"); 
-  showUI();
-  hideFullscreen();
-  hideIdle();
+          document.body.classList.remove("game-lock");
+          showUI();
+          hideFullscreen();
+          hideIdle();
+          hideWaiting();
 
-  if (st.phase === "running" && st.gameEndsAt) {
-    statusLine.textContent = "Hra běží… (host není ve hře)";
-    startHostCountdown(st.gameEndsAt);
-  } else {
-    stopHostCountdown();
-    statusLine.textContent =
-      st.phase === "lobby"
-        ? "Lobby – nastav a dej Start."
-        : (st.phase === "stopped" ? "Stop." : "…");
-  }
-  return;
-}
+          if (st.phase === "running" && st.gameEndsAt) {
+            statusLine.textContent = "Hra běží… (host není ve hře)";
+            startHostCountdown(st.gameEndsAt);
+          } else {
+            stopHostCountdown();
+            statusLine.textContent =
+              st.phase === "lobby"
+                ? "Lobby – nastav a dej Start."
+                : (st.phase === "stopped" ? "Stop." : "…");
+          }
+          return;
+      }
 
       if (st.phase === "lobby") {
-          document.body.classList.remove("game-lock"); 
+          document.body.classList.remove("game-lock");
         showUI();
         statusLine.textContent = "Lobby – čekám na start od hosta…";
         hideFullscreen(); hideIdle();
@@ -854,33 +1008,32 @@ window.addEventListener("pagehide", () => {
         const dc = st.deviceColors || {};
         const myColorKey = dc[deviceId] || null;
 
-if (myColorKey) {
-  // ✅ když mi (znovu) přiřadí barvu, odemkni tap pro toto zobrazení
-  if (myColorKey !== lastAssignedColorKey) {
-    tapLocked = false;
-    lastAssignedColorKey = myColorKey;
-  } else {
-    // i kdyby se omylem přiřadila stejná barva znovu, dovol další kolo
-    tapLocked = false;
-  }
+        if (myColorKey) {
+          // ✅ když mi (znovu) přiřadí barvu, odemkni tap pro toto zobrazení
+          if (myColorKey !== lastAssignedColorKey) {
+            tapLocked = false;
+            lastAssignedColorKey = myColorKey;
+          } else {
+            // i kdyby se omylem přiřadila stejná barva znovu, dovol další kolo
+            tapLocked = false;
+          }
 
-  const c = configByKey(myColorKey);
-  const niceName = (c.label && c.label.trim()) ? c.label.trim() : "Tvoje barva";
-  const niceEmoji = (c.emoji && c.emoji.trim()) ? (c.emoji.trim() + " ") : "";
+          const c = configByKey(myColorKey);
+          const niceName = (c.label && c.label.trim()) ? c.label.trim() : "Tvoje barva";
+          const niceEmoji = (c.emoji && c.emoji.trim()) ? (c.emoji.trim() + " ") : "";
 
-  showFullscreen(c.css || "#222", (niceEmoji + niceName).trim(), "Klepni kamkoliv");
-} else {
-  // když jsem idle, taky je bezpečné odemknout
-  tapLocked = false;
-  lastAssignedColorKey = null;
-  showIdle();
-}
-return;
-
+          showFullscreen(c.css || "#222", (niceEmoji + niceName).trim(), "Klepni kamkoliv");
+        } else {
+          // když jsem idle, taky je bezpečné odemknout
+          tapLocked = false;
+          lastAssignedColorKey = null;
+          showIdle();
+        }
+        return;
       }
 
       if (st.phase === "stopped") {
-          document.body.classList.remove("game-lock"); 
+          document.body.classList.remove("game-lock");
         showUI();
         statusLine.textContent = "Stop.";
         hideFullscreen(); hideIdle();
@@ -959,13 +1112,19 @@ async function hostPruneGhosts(){
       return (await stateRef.child("hostId").get()).val();
     }
 
+    // ✅ jen schválené herní telefony (approved), bez hosta
     async function getConnectedGameDevices() {
       const devSnap = await devicesRef.get();
       const devObj = devSnap.val() || {};
-      let ids = Object.keys(devObj);
 
       const hostId = await getHostId();
-      ids = ids.filter(id => id !== hostId);
+
+      let ids = Object.keys(devObj).filter(id => {
+        if (id === hostId) return false;
+        const d = devObj[id] || {};
+        return d.approved === true && d.denied !== true;
+      });
+
       return ids;
     }
 
@@ -992,8 +1151,6 @@ async function hostPruneGhosts(){
       return { dc, shownAtMap };
     }
 
-
-
     function getColoredDevices(dc){
       return Object.keys(dc || {}).filter(d=>!!dc[d]);
     }
@@ -1007,7 +1164,6 @@ function getIdleDeviceIds(dc){
 function pickRandom(arr){
   return arr[Math.floor(Math.random() * arr.length)];
 }
-
 
 async function hostHandleEventForDevice(deviceIdThatTriggered, reason) {
   const st = (await stateRef.get()).val() || {};
@@ -1121,10 +1277,6 @@ async function hostHandleEventForDevice(deviceIdThatTriggered, reason) {
   });
 }
 
-
-
-
-
     async function hostTick() {
       if (!isHost || !hostRunning) return;
       await hostPruneGhosts();
@@ -1189,7 +1341,6 @@ fs.addEventListener("pointerdown", async (e) => {
 
   // ❗ NEODEMYKEJ tady – odemkne se až když dostaneš novou barvu
 });
-
 
     // Buttons
     btnRandom.onclick = () => { codeInput.value = genCode(); };
@@ -1261,7 +1412,6 @@ await stateRef.update({
   deviceColors: init.dc,
   shownAtMap: init.shownAtMap
 });
-
 
       clearTimeout(stopTimer);
       stopTimer = setTimeout(async ()=>{
