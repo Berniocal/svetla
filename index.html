@@ -1372,28 +1372,42 @@ async function hostHandleEventForDevice(deviceIdThatTriggered, reason) {
 
       await hostHandleEventForDevice(act.deviceId, "tap");
     }
+fs.addEventListener("contextmenu", (e) => e.preventDefault());
 
 fs.addEventListener("pointerdown", async (e) => {
-  // jen primární dotyk (více prstů => jen jeden se počítá)
   if (e.isPrimary === false) return;
-
   if (!roomCode) return;
 
-  if (tapLocked) return;      // 🚫 další dotyky ignoruj
-  tapLocked = true;           // 🔒 zamkni tap hned
+  if (tapLocked) return;
+  tapLocked = true;
 
   keepAwakeStart();
   e.preventDefault();
 
-  // ⚡ okamžitě schovej barvu (lokálně)
   hideFullscreen();
   showIdle();
 
   try {
     await actionsRef.push({ type:"tap", deviceId, at: now() });
   } catch {}
+});
 
-  // ❗ NEODEMYKEJ tady – odemkne se až když dostaneš novou barvu
+fs.addEventListener("pointerup", async (e) => {
+  if (e.isPrimary === false) return;
+  if (!roomCode) return;
+
+  if (tapLocked) return;
+  tapLocked = true;
+
+  keepAwakeStart();
+  e.preventDefault();
+
+  hideFullscreen();
+  showIdle();
+
+  try {
+    await actionsRef.push({ type:"tap", deviceId, at: now() });
+  } catch {}
 });
 
     // Buttons
