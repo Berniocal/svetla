@@ -95,6 +95,28 @@
       flex: 0 0 auto;
     }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+    /* ✅ Žádosti o připojení – responzivní řádek, aby se vešel na mobil */
+    .reqRow{
+      display:grid;
+      grid-template-columns: 1fr;
+      gap:10px;
+      align-items:stretch;
+      padding:10px;
+      border-radius:14px;
+      border: 1px solid rgba(255,255,255,.10);
+      background: rgba(0,0,0,.12);
+    }
+    .reqBtns{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+    }
+    .reqBtns button{
+      flex: 1 1 140px;   /* ✅ obě tlačítka vždy vidět; zalomí se pod sebe */
+      min-width: 140px;
+    }
+
 html, body{
   overscroll-behavior: none;   /* blokuje pull-to-refresh */
 }
@@ -246,9 +268,9 @@ body.game-lock{
   <!-- Fullscreen idle (ztmavení) -->
   <div class="idleScreen" id="idle"></div>
 
-  <!-- ✅ WAITING screen -->
+  <!-- ✅ WAITING / DENIED / HOST LEFT screen -->
   <div class="waitScreen" id="wait">
-    <div class="waitTitle">Čekám na schválení…</div>
+    <div class="waitTitle" id="waitTitle">Čekám na schválení…</div>
     <div class="waitText" id="waitText">—</div>
   </div>
 
@@ -375,6 +397,7 @@ document.addEventListener("visibilitychange", ()=>{
 
     // ✅ WAIT refs
     const wait = $("wait");
+    const waitTitle = $("waitTitle");
     const waitText = $("waitText");
 
     // ✅ join requests list (host)
@@ -584,8 +607,30 @@ document.addEventListener("gesturestart", (e) => {
       hideFullscreen();
       hideIdle();
       wait.style.display = "flex";
+      waitTitle.textContent = "Čekám na schválení…";
       waitText.textContent = `Čekáš na hlavní telefon „${hostName || "Host"}“, až tě přijme do hry.`;
     }
+
+    function showDenied(hostName){
+      document.body.classList.remove("game-lock");
+      hideUI();
+      hideFullscreen();
+      hideIdle();
+      wait.style.display = "flex";
+      waitTitle.textContent = "Odmítnuto";
+      waitText.textContent = `Hlavní telefon „${hostName || "Host"}“ tě odmítl. Zavři stránku a zkus to znovu (nebo zadej jiný kód).`;
+    }
+
+    function showHostLeft(){
+      document.body.classList.remove("game-lock");
+      hideUI();
+      hideFullscreen();
+      hideIdle();
+      wait.style.display = "flex";
+      waitTitle.textContent = "Host se odhlásil";
+      waitText.textContent = "Hlavní telefon odešel. Místnost byla zrušena.";
+    }
+
     function hideWaiting(){
       wait.style.display = "none";
     }
@@ -623,7 +668,7 @@ document.addEventListener("gesturestart", (e) => {
       try { clearTimeout(stopTimer); } catch {}
       try { if (hostTickTimer) { clearInterval(hostTickTimer); hostTickTimer = null; } } catch {}
 
-      try { hideFullscreen(); hideIdle(); hideWaiting(); } catch {}
+      try { hideFullscreen(); hideIdle(); } catch {}
       try { showUI(); } catch {}
 
       try {
@@ -772,11 +817,11 @@ document.addEventListener("gesturestart", (e) => {
       rolePill.style.background = isHost ? "rgba(42,102,255,.22)" : "rgba(255,214,10,.18)";
       hostCard.style.display = isHost ? "" : "none";
 
-      // když host zmizí, hráči odejdou
+      // ✅ když host zmizí, hráčům zůstane obrazovka "host se odhlásil"
       if (!isHost) {
         hostAliveRef.on("value", (s) => {
           if (!s.exists()) {
-            leaveRoom("Host odešel – místnost zrušena");
+            showHostLeft(); // ✅ NEleaveRoom(), ať to svítí pořád
           }
         });
       }
@@ -786,19 +831,20 @@ document.addEventListener("gesturestart", (e) => {
         const me = s.val() || {};
         if (isHost) return;
 
+        // zjisti jméno hosta (pro text)
+        let hostName = "Host";
+        try {
+          const hid = await getHostId();
+          const hs = await devicesRef.child(hid).get();
+          hostName = (hs.val() && hs.val().name) ? hs.val().name : "Host";
+        } catch {}
+
         if (me.denied) {
-          await leaveRoom("Host tě nepřijal do hry");
+          showDenied(hostName); // ✅ ať to svítí pořád
           return;
         }
 
         if (!me.approved) {
-          // zjisti jméno hosta (pro text)
-          let hostName = "Host";
-          try {
-            const hid = await getHostId();
-            const hs = await devicesRef.child(hid).get();
-            hostName = (hs.val() && hs.val().name) ? hs.val().name : "Host";
-          } catch {}
           showWaiting(hostName);
         } else {
           hideWaiting();
@@ -828,13 +874,16 @@ document.addEventListener("gesturestart", (e) => {
 
           ids.forEach((id) => {
             const r = reqs[id] || {};
+
             const row = document.createElement("div");
-            row.className = "colorRow";
-            row.style.gridTemplateColumns = "1fr 110px 110px";
+            row.className = "reqRow";
 
             const left = document.createElement("div");
             left.innerHTML = `<div class="big" style="font-size:16px">Chce se připojit: ${escapeHtml(r.name || "Telefon")}</div>
-                              <div class="muted mono">${escapeHtml(id)}</div>`;
+                              <div class="muted mono" style="word-break:break-all">${escapeHtml(id)}</div>`;
+
+            const btnWrap = document.createElement("div");
+            btnWrap.className = "reqBtns";
 
             const btnYes = document.createElement("button");
             btnYes.textContent = "Přijmout";
@@ -851,12 +900,15 @@ document.addEventListener("gesturestart", (e) => {
             btnNo.onclick = async () => {
               try { await devicesRef.child(id).update({ approved:false, denied:true }); } catch {}
               try { await requestsRef.child(id).remove(); } catch {}
-              try { await devicesRef.child(id).remove(); } catch {}
+              // ✅ necháme zařízení v devices, aby vidělo denied = true a svítilo "odmítnuto"
             };
 
+            btnWrap.appendChild(btnYes);
+            btnWrap.appendChild(btnNo);
+
             row.appendChild(left);
-            row.appendChild(btnYes);
-            row.appendChild(btnNo);
+            row.appendChild(btnWrap);
+
             reqList.appendChild(row);
           });
         });
@@ -981,7 +1033,6 @@ document.addEventListener("gesturestart", (e) => {
           showUI();
           hideFullscreen();
           hideIdle();
-          hideWaiting();
 
           if (st.phase === "running" && st.gameEndsAt) {
             statusLine.textContent = "Hra běží… (host není ve hře)";
@@ -1087,9 +1138,12 @@ async function hostPruneGhosts(){
 
   if (!toRemove.length) return;
 
-  // smaž je z devices
+  // smaž je z devices (jen schválené nebo čekající; odmítnutí necháme být)
   const upd = {};
-  for (const id of toRemove) upd[id] = null;
+  for (const id of toRemove) {
+    // necháme pryč úplně – je to ghost
+    upd[id] = null;
+  }
   await devicesRef.update(upd);
 
   // a oprav deviceColors (když byli ve hře)
