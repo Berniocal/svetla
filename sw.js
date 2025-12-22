@@ -8,7 +8,7 @@
 'use strict';
 
 // ✅ Tohle změň při každém nasazení nové verze
-const APP_VERSION = '2025-12-18_15';
+const APP_VERSION = '2025-12-18_16';
 
 const CACHE_PREFIX = 'svetla';
 const CACHE_HTML   = `${CACHE_PREFIX}-html-${APP_VERSION}`;
